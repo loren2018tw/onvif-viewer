@@ -31,3 +31,5 @@ export interface FFmpegStatus {
   installed: boolean;
   install_command: string;
 }
+
+export type StreamType = "main" | "sub";

@@ -22,9 +22,12 @@ fn embed_credentials(uri: &str, username: &str, password: &str) -> String {
 /// Handles cases where the XML parser mishandles &amp; entities.
 fn extract_uri_from_soap_xml(xml: &str) -> Option<String> {
     // Find <tt:Uri>...</tt:Uri> or <Uri>...</Uri>
-    let uri_start = xml.find("<tt:Uri>").map(|i| i + 8)
+    let uri_start = xml
+        .find("<tt:Uri>")
+        .map(|i| i + 8)
         .or_else(|| xml.find("<Uri>").map(|i| i + 5))?;
-    let uri_end = xml[uri_start..].find("</tt:Uri>")
+    let uri_end = xml[uri_start..]
+        .find("</tt:Uri>")
         .or_else(|| xml[uri_start..].find("</Uri>"))?;
     let raw = &xml[uri_start..uri_start + uri_end];
     // Decode XML entities
@@ -41,14 +44,16 @@ fn extract_uri_from_soap_xml(xml: &str) -> Option<String> {
     }
 }
 
-/// Get RTSP stream URI from an ONVIF camera using oxvif
-/// Iterates all profiles and tries both Media1 and Media2 for each.
+/// Get RTSP stream URI from an ONVIF camera using oxvif.
+/// `stream_type` supports "main" or "sub" and defaults to preferring sub-stream.
+/// Tries both Media1 and Media2 for each profile.
 /// Falls back to raw SOAP parsing when oxvif misparses URIs with &amp; entities.
 pub async fn get_stream_uri(
     address: &str,
     port: u16,
     username: &str,
     password: &str,
+    stream_type: &str,
 ) -> Result<String> {
     let device_url = format!("http://{}:{}/onvif/device_service", address, port);
 
@@ -68,10 +73,52 @@ pub async fn get_stream_uri(
         anyhow::bail!("No media profiles available");
     }
 
+    let want_main = stream_type.eq_ignore_ascii_case("main");
+    let score_profile = |name: &str, token: &str| -> i32 {
+        let text = format!("{} {}", name.to_lowercase(), token.to_lowercase());
+        let is_sub = [
+            "sub",
+            "secondary",
+            "extra",
+            "low",
+            "minor",
+            "2nd",
+            "small",
+            "sd",
+        ]
+        .iter()
+        .any(|k| text.contains(k));
+        let is_main = ["main", "primary", "high", "major", "master", "hd"]
+            .iter()
+            .any(|k| text.contains(k));
+
+        match (want_main, is_main, is_sub) {
+            (true, true, _) => 3,
+            (true, _, true) => -2,
+            (false, _, true) => 3,
+            (false, true, _) => -2,
+            _ => 0,
+        }
+    };
+
+    let mut profile_indices: Vec<usize> = (0..profiles.len()).collect();
+    profile_indices.sort_by(|a, b| {
+        let profile_a = &profiles[*a];
+        let profile_b = &profiles[*b];
+        let score_a = score_profile(&profile_a.name, &profile_a.token.to_string());
+        let score_b = score_profile(&profile_b.name, &profile_b.token.to_string());
+
+        score_b
+            .cmp(&score_a)
+            .then_with(|| if want_main { a.cmp(b) } else { b.cmp(a) })
+    });
+
     let mut last_raw_uri = String::new();
 
     // Try each profile with Media1, then Media2
-    for profile in &profiles {
+    for profile_idx in &profile_indices {
+        let profile = &profiles[*profile_idx];
+
         // Try Media1
         if let Ok(stream_uri) = session.get_stream_uri(&profile.token).await {
             if is_valid_rtsp_uri(&stream_uri.uri) {
@@ -94,8 +141,11 @@ pub async fn get_stream_uri(
     // Fallback: oxvif may misparse URIs with &amp; entities (e.g. Dahua cameras).
     // Try raw SOAP request and extract URI ourselves.
     if let Some(media_url) = &session.capabilities().media.url {
-        for profile in &profiles {
-            if let Ok(raw_xml) = raw_get_stream_uri(media_url, &profile.token, username, password).await {
+        for profile_idx in &profile_indices {
+            let profile = &profiles[*profile_idx];
+            if let Ok(raw_xml) =
+                raw_get_stream_uri(media_url, &profile.token, username, password).await
+            {
                 if let Some(uri) = extract_uri_from_soap_xml(&raw_xml) {
                     return Ok(embed_credentials(&uri, username, password));
                 }
@@ -201,7 +251,11 @@ pub async fn diagnose_camera(
                 // Try Media1 GetStreamUri
                 match session.get_stream_uri(&p.token).await {
                     Ok(su) => {
-                        let valid = if is_valid_rtsp_uri(&su.uri) { "✅" } else { "⚠️" };
+                        let valid = if is_valid_rtsp_uri(&su.uri) {
+                            "✅"
+                        } else {
+                            "⚠️"
+                        };
                         report.push_str(&format!("    Media1 URI: {} {}\n", valid, su.uri));
                     }
                     Err(e) => {
@@ -212,7 +266,11 @@ pub async fn diagnose_camera(
                 // Try Media2 GetStreamUri
                 match session.get_stream_uri_media2(&p.token).await {
                     Ok(uri) => {
-                        let valid = if is_valid_rtsp_uri(&uri) { "✅" } else { "⚠️" };
+                        let valid = if is_valid_rtsp_uri(&uri) {
+                            "✅"
+                        } else {
+                            "⚠️"
+                        };
                         report.push_str(&format!("    Media2 URI: {} {}\n", valid, uri));
                     }
                     Err(e) => {
@@ -225,7 +283,9 @@ pub async fn diagnose_camera(
             if let Some(first_profile) = profiles.first() {
                 if let Some(media_url) = &caps.media.url {
                     report.push_str("\n【原始 SOAP 回應（第一個 Profile）】\n");
-                    match raw_get_stream_uri(media_url, &first_profile.token, username, password).await {
+                    match raw_get_stream_uri(media_url, &first_profile.token, username, password)
+                        .await
+                    {
                         Ok(raw_xml) => {
                             report.push_str(&raw_xml);
                             report.push('\n');

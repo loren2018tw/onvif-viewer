@@ -1,9 +1,9 @@
 <template>
-  <v-container fluid>
-    <v-row>
+  <v-container fluid class="home-container">
+    <v-row class="home-row">
       <!-- Left panel: Camera list & discovery -->
-      <v-col cols="12" md="4" lg="3">
-        <v-card class="mb-4">
+      <v-col cols="12" lg="4" class="left-panel">
+        <v-card class="mb-4 flex-shrink-0">
           <v-card-title class="d-flex align-center">
             <v-icon class="mr-2">mdi-magnify</v-icon>
             搜尋攝影機
@@ -62,99 +62,127 @@
           </v-card-text>
         </v-card>
 
-        <!-- Discovered cameras -->
-        <v-card v-if="store.discoveredCameras.length > 0" class="mb-4">
-          <v-card-title class="text-subtitle-1">
-            <v-icon class="mr-2">mdi-access-point</v-icon>
-            搜尋結果 ({{ store.discoveredCameras.length }})
-          </v-card-title>
-          <v-list density="compact">
-            <v-list-item
-              v-for="(cam, idx) in store.discoveredCameras"
-              :key="idx"
-              @click="openAddDialog(cam)"
-            >
-              <template #prepend>
-                <v-icon color="success">mdi-camera</v-icon>
-              </template>
-              <v-list-item-title>{{
-                cam.name || cam.address
-              }}</v-list-item-title>
-              <v-list-item-subtitle
-                >{{ cam.address }}:{{ cam.port }}</v-list-item-subtitle
+        <div class="list-split">
+          <!-- Discovered cameras -->
+          <v-card class="list-card">
+            <v-card-title class="text-subtitle-1 d-flex align-center">
+              <v-icon class="mr-2">mdi-access-point</v-icon>
+              搜尋結果 ({{ store.discoveredCameras.length }})
+            </v-card-title>
+            <div class="list-scroll">
+              <v-list
+                v-if="store.discoveredCameras.length > 0"
+                density="compact"
               >
-              <template #append>
-                <v-btn
-                  icon
-                  size="small"
-                  color="primary"
-                  @click.stop="openAddDialog(cam)"
+                <v-list-item
+                  v-for="(cam, idx) in store.discoveredCameras"
+                  :key="idx"
+                  @click="openAddDialog(cam)"
                 >
-                  <v-icon>mdi-plus</v-icon>
-                </v-btn>
-              </template>
-            </v-list-item>
-          </v-list>
-        </v-card>
+                  <template #prepend>
+                    <v-icon color="success">mdi-camera</v-icon>
+                  </template>
+                  <v-list-item-title>{{
+                    cam.name || cam.address
+                  }}</v-list-item-title>
+                  <v-list-item-subtitle
+                    >{{ cam.address }}:{{ cam.port }}</v-list-item-subtitle
+                  >
+                  <template #append>
+                    <v-btn
+                      icon
+                      size="small"
+                      color="primary"
+                      @click.stop="openAddDialog(cam)"
+                    >
+                      <v-icon>mdi-plus</v-icon>
+                    </v-btn>
+                  </template>
+                </v-list-item>
+              </v-list>
+              <v-card-text v-else class="text-center text-medium-emphasis">
+                尚無搜尋結果
+              </v-card-text>
+            </div>
+          </v-card>
 
-        <!-- Saved cameras -->
-        <v-card>
-          <v-card-title class="d-flex align-center">
-            <v-icon class="mr-2">mdi-bookmark</v-icon>
-            已儲存攝影機
-            <v-spacer />
-            <v-btn icon size="small" @click="openAddDialog()">
-              <v-icon>mdi-plus</v-icon>
-            </v-btn>
-          </v-card-title>
-          <v-list v-if="store.cameras.length > 0" density="compact">
-            <v-list-item
-              v-for="cam in store.cameras"
-              :key="cam.id"
-              :active="selectedCamera?.id === cam.id"
-              @click="selectCamera(cam)"
-            >
-              <template #prepend>
-                <v-icon>mdi-camera</v-icon>
-              </template>
-              <v-list-item-title>{{ cam.name }}</v-list-item-title>
-              <v-list-item-subtitle
-                >{{ cam.address }}:{{ cam.onvif_port }}</v-list-item-subtitle
-              >
-              <template #append>
-                <v-btn
-                  icon
-                  size="x-small"
-                  color="primary"
-                  class="mr-1"
-                  @click.stop="openEditDialog(cam)"
+          <!-- Saved cameras -->
+          <v-card class="list-card">
+            <v-card-title class="d-flex align-center">
+              <v-icon class="mr-2">mdi-bookmark</v-icon>
+              已儲存攝影機
+              <v-spacer />
+              <v-btn icon size="small" @click="openAddDialog()">
+                <v-icon>mdi-plus</v-icon>
+              </v-btn>
+            </v-card-title>
+            <div class="list-scroll">
+              <v-list v-if="store.cameras.length > 0" density="compact">
+                <v-list-item
+                  v-for="cam in store.cameras"
+                  :key="cam.id"
+                  :active="selectedCamera?.id === cam.id"
+                  @click="selectCamera(cam)"
                 >
-                  <v-icon>mdi-pencil</v-icon>
-                </v-btn>
-                <v-btn
-                  icon
-                  size="x-small"
-                  color="error"
-                  @click.stop="handleDelete(cam.id)"
-                >
-                  <v-icon>mdi-delete</v-icon>
-                </v-btn>
-              </template>
-            </v-list-item>
-          </v-list>
-          <v-card-text v-else class="text-center text-medium-emphasis">
-            尚無儲存的攝影機
-          </v-card-text>
-        </v-card>
+                  <template #prepend>
+                    <v-icon>mdi-camera</v-icon>
+                  </template>
+                  <v-list-item-title>{{ cam.name }}</v-list-item-title>
+                  <v-list-item-subtitle
+                    >{{ cam.address }}:{{
+                      cam.onvif_port
+                    }}</v-list-item-subtitle
+                  >
+                  <template #append>
+                    <v-btn
+                      icon
+                      size="x-small"
+                      color="primary"
+                      class="mr-1"
+                      @click.stop="openEditDialog(cam)"
+                    >
+                      <v-icon>mdi-pencil</v-icon>
+                    </v-btn>
+                    <v-btn
+                      icon
+                      size="x-small"
+                      color="error"
+                      @click.stop="handleDelete(cam.id)"
+                    >
+                      <v-icon>mdi-delete</v-icon>
+                    </v-btn>
+                  </template>
+                </v-list-item>
+              </v-list>
+              <v-card-text v-else class="text-center text-medium-emphasis">
+                尚無儲存的攝影機
+              </v-card-text>
+            </div>
+          </v-card>
+        </div>
       </v-col>
 
       <!-- Right panel: Preview -->
-      <v-col cols="12" md="8" lg="9">
-        <v-card class="fill-height" min-height="500">
-          <v-card-title class="d-flex align-center">
+      <v-col cols="12" lg="8" class="right-panel">
+        <v-card class="preview-card">
+          <v-card-title
+            class="d-flex align-center flex-wrap"
+            style="row-gap: 8px; column-gap: 8px"
+          >
             <v-icon class="mr-2">mdi-monitor</v-icon>
             即時預覽
             <v-spacer />
+            <v-select
+              v-model="selectedStreamType"
+              :items="streamTypeOptions"
+              item-title="title"
+              item-value="value"
+              label="碼流"
+              density="compact"
+              hide-details
+              variant="outlined"
+              class="stream-select"
+            />
             <v-checkbox
               v-model="autoPreview"
               label="自動預覽"
@@ -191,23 +219,20 @@
               停止
             </v-btn>
           </v-card-title>
-          <v-card-text
-            class="d-flex justify-center align-center"
-            style="min-height: 400px"
-          >
+          <v-card-text class="preview-body d-flex justify-center align-center">
             <div v-if="store.isLoadingStream" class="text-center">
               <v-progress-circular indeterminate color="primary" size="64" />
               <div class="mt-4 text-medium-emphasis">正在連線攝影機...</div>
             </div>
             <div
               v-else-if="store.isPreviewing && store.previewUrl"
-              class="w-100"
+              class="w-100 h-100"
             >
-              <div class="d-flex justify-center" style="background: #000">
+              <div class="d-flex justify-center align-center preview-frame">
                 <img
                   :src="store.previewUrl"
                   alt="攝影機預覽"
-                  style="max-width: 100%; max-height: 70vh; object-fit: contain"
+                  class="preview-image"
                   @error="onStreamError"
                 />
               </div>
@@ -423,7 +448,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted } from "vue";
 import { useCameraStore } from "@/stores/camera";
-import type { CameraInfo, DiscoveredCamera } from "@/types/camera";
+import type { CameraInfo, DiscoveredCamera, StreamType } from "@/types/camera";
 
 const store = useCameraStore();
 
@@ -432,6 +457,7 @@ const scanStartIp = ref("192.168.1.1");
 const scanEndIp = ref("192.168.1.254");
 const scanPort = ref(80);
 const selectedCamera = ref<CameraInfo | null>(null);
+const selectedStreamType = ref<StreamType>("sub");
 const autoPreview = ref(false);
 const addDialog = ref(false);
 const showError = ref(false);
@@ -457,6 +483,10 @@ const formData = ref({
 });
 
 const ffmpegDialogOpen = ref(false);
+const streamTypeOptions: { title: string; value: StreamType }[] = [
+  { title: "副碼流", value: "sub" },
+  { title: "主碼流", value: "main" },
+];
 
 watch(
   () => store.error,
@@ -477,12 +507,19 @@ onMounted(() => {
 async function selectCamera(cam: CameraInfo) {
   selectedCamera.value = cam;
   if (autoPreview.value) {
-    store.getStreamUri(cam.address, cam.onvif_port, cam.username, cam.password);
+    store.getStreamUri(
+      cam.address,
+      cam.onvif_port,
+      cam.username,
+      cam.password,
+      selectedStreamType.value,
+    );
     await store.startPreview(
       cam.address,
       cam.onvif_port,
       cam.username,
       cam.password,
+      selectedStreamType.value,
     );
   } else {
     store.stopPreview();
@@ -493,12 +530,19 @@ async function handlePreview() {
   if (!selectedCamera.value) return;
   const cam = selectedCamera.value;
   // Get stream URI for display, and start MJPEG preview
-  store.getStreamUri(cam.address, cam.onvif_port, cam.username, cam.password);
+  store.getStreamUri(
+    cam.address,
+    cam.onvif_port,
+    cam.username,
+    cam.password,
+    selectedStreamType.value,
+  );
   await store.startPreview(
     cam.address,
     cam.onvif_port,
     cam.username,
     cam.password,
+    selectedStreamType.value,
   );
 }
 
@@ -628,3 +672,99 @@ async function copyDiagnoseReport() {
   showCopySuccess.value = true;
 }
 </script>
+
+<style scoped>
+.home-container {
+  height: calc(100vh - 96px);
+  min-height: 680px;
+}
+
+.home-row {
+  height: 100%;
+}
+
+.left-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.list-split {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  gap: 16px;
+}
+
+.list-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.list-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.right-panel {
+  display: flex;
+  height: 100%;
+}
+
+.preview-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.preview-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.preview-frame {
+  background: #000;
+  height: 100%;
+  min-height: 320px;
+}
+
+.preview-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.stream-select {
+  min-width: 150px;
+  max-width: 180px;
+}
+
+@media (max-width: 1279px) {
+  .home-container {
+    height: auto;
+    min-height: 0;
+  }
+
+  .left-panel,
+  .right-panel {
+    height: auto;
+  }
+
+  .list-split {
+    height: auto;
+    grid-template-rows: minmax(220px, 1fr) minmax(220px, 1fr);
+  }
+
+  .preview-card {
+    min-height: 420px;
+  }
+
+  .preview-frame {
+    min-height: 260px;
+  }
+}
+</style>

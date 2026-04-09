@@ -28,10 +28,17 @@ pub async fn get_stream_uri(
     port: u16,
     username: String,
     password: String,
+    stream_type: Option<String>,
 ) -> Result<String, String> {
-    crate::camera::get_stream_uri(&address, port, &username, &password)
-        .await
-        .map_err(|e| e.to_string())
+    crate::camera::get_stream_uri(
+        &address,
+        port,
+        &username,
+        &password,
+        stream_type.as_deref().unwrap_or("sub"),
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -123,12 +130,19 @@ pub async fn start_preview(
     port: u16,
     username: String,
     password: String,
+    stream_type: Option<String>,
     state: tauri::State<'_, Arc<Mutex<StreamManager>>>,
 ) -> Result<String, String> {
     // First get the RTSP stream URI
-    let rtsp_uri = crate::camera::get_stream_uri(&address, port, &username, &password)
-        .await
-        .map_err(|e| e.to_string())?;
+    let rtsp_uri = crate::camera::get_stream_uri(
+        &address,
+        port,
+        &username,
+        &password,
+        stream_type.as_deref().unwrap_or("sub"),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
 
     let mut manager = state.lock().await;
     manager.start(&rtsp_uri).await.map_err(|e| e.to_string())

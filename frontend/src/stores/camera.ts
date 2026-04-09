@@ -6,6 +6,7 @@ import type {
   DiscoveredCamera,
   ScanRange,
   FFmpegStatus,
+  StreamType,
 } from "@/types/camera";
 
 export const useCameraStore = defineStore("camera", () => {
@@ -105,6 +106,7 @@ export const useCameraStore = defineStore("camera", () => {
     port: number,
     username: string,
     password: string,
+    streamType: StreamType = "sub",
   ) {
     try {
       isLoadingStream.value = true;
@@ -114,6 +116,7 @@ export const useCameraStore = defineStore("camera", () => {
         port,
         username,
         password,
+        streamType,
       });
     } catch (e) {
       error.value = String(e);
@@ -192,6 +195,7 @@ export const useCameraStore = defineStore("camera", () => {
     port: number,
     username: string,
     password: string,
+    streamType: StreamType = "sub",
   ) {
     try {
       isLoadingStream.value = true;
@@ -201,6 +205,7 @@ export const useCameraStore = defineStore("camera", () => {
         port,
         username,
         password,
+        streamType,
       });
       previewUrl.value = url;
       isPreviewing.value = true;
