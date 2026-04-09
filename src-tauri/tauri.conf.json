@@ -1,0 +1,36 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicovrc/tauri-docs/refs/heads/v2/src/content/docs/_schema/config.schema.json",
+  "productName": "ONVIF View",
+  "version": "0.1.0",
+  "identifier": "com.onvif-viewer.app",
+  "build": {
+    "frontendDist": "../frontend/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "ONVIF Camera Preview",
+        "width": 1200,
+        "height": 800,
+        "maximized": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "targets": [
+      "deb",
+      "nsis"
+    ]
+  },
+  "plugins": {
+    "shell": {
+      "open": true
+    }
+  }
+}
