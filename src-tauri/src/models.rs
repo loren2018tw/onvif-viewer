@@ -2,6 +2,12 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FFmpegStatus {
+    pub installed: bool,
+    pub install_command: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CameraInfo {
     pub id: String,
     pub name: String,

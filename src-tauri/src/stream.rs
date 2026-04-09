@@ -15,13 +15,29 @@ use tokio::{
 };
 use std::process::Stdio;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 const BOUNDARY: &str = "frame";
 const MAX_BUF_SIZE: usize = 4 * 1024 * 1024;
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 struct ActiveStream {
     ffmpeg: Child,
     shutdown_tx: oneshot::Sender<()>,
     reader_handle: tokio::task::JoinHandle<()>,
+}
+
+fn hide_window(cmd: &mut Command) {
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = cmd;
+    }
 }
 
 pub struct StreamManager {
@@ -42,17 +58,18 @@ impl StreamManager {
         self.stop().await;
 
         // Verify ffmpeg is available
-        Command::new("ffmpeg")
-            .arg("-version")
+        let mut version_cmd = Command::new("ffmpeg");
+        version_cmd.arg("-version")
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
+            .stderr(Stdio::null());
+        hide_window(&mut version_cmd);
+        version_cmd.status()
             .await
             .context("找不到 ffmpeg，請先安裝 ffmpeg")?;
 
         // Spawn FFmpeg: RTSP → MJPEG pipe
-        let mut ffmpeg = Command::new("ffmpeg")
-            .args([
+        let mut ffmpeg = Command::new("ffmpeg");
+        ffmpeg.args([
                 "-rtsp_transport", "tcp",
                 "-i", rtsp_uri,
                 "-f", "image2pipe",
@@ -64,8 +81,9 @@ impl StreamManager {
             ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
+            .kill_on_drop(true);
+        hide_window(&mut ffmpeg);
+        let mut ffmpeg = ffmpeg.spawn()
             .context("無法啟動 ffmpeg")?;
 
         let stdout = ffmpeg.stdout.take().context("無法取得 ffmpeg stdout")?;

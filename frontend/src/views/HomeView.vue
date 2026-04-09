@@ -272,6 +272,41 @@
       </template>
     </v-snackbar>
 
+    <!-- FFmpeg not installed dialog -->
+    <v-dialog v-model="ffmpegDialogOpen" max-width="500">
+      <v-card>
+        <v-card-title class="d-flex align-center">
+          <v-icon class="mr-2" color="warning">mdi-alert-circle</v-icon>
+          未偵測到 FFmpeg
+        </v-card-title>
+        <v-card-text>
+          <div class="mb-4">部分功能需要 FFmpeg。請使用以下指令安裝：</div>
+          <v-alert
+            v-if="store.ffmpegStatus"
+            type="info"
+            variant="tonal"
+            class="mb-3"
+          >
+            <code style="word-break: break-all">{{
+              store.ffmpegStatus.install_command
+            }}</code>
+          </v-alert>
+          <div class="text-caption text-medium-emphasis">
+            安裝後請重新啟動應用程式。
+          </div>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="ffmpegDialogOpen = false" variant="tonal">
+            稍後提醒
+          </v-btn>
+          <v-btn @click="ffmpegDialogOpen = false" color="primary">
+            了解
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- Diagnose result dialog -->
     <v-dialog v-model="diagnoseDialog" max-width="700">
       <v-card>
@@ -280,7 +315,18 @@
           ONVIF 診斷報告
         </v-card-title>
         <v-card-text>
-          <v-sheet rounded class="text-body-2 pa-3" style="white-space: pre-wrap; word-break: break-all; font-family: monospace;" color="surface-variant"><pre class="ma-0">{{ diagnoseReport }}</pre></v-sheet>
+          <v-sheet
+            rounded
+            class="text-body-2 pa-3"
+            style="
+              white-space: pre-wrap;
+              word-break: break-all;
+              font-family: monospace;
+            "
+            color="surface-variant"
+          >
+            <pre class="ma-0">{{ diagnoseReport }}</pre>
+          </v-sheet>
         </v-card-text>
         <v-card-actions>
           <v-btn variant="tonal" @click="copyDiagnoseReport">
@@ -410,6 +456,8 @@ const formData = ref({
   password: "",
 });
 
+const ffmpegDialogOpen = ref(false);
+
 watch(
   () => store.error,
   (val) => {
@@ -419,6 +467,11 @@ watch(
 
 onMounted(() => {
   store.loadCameras();
+  store.checkFFmpeg().then(() => {
+    if (store.ffmpegStatus && !store.ffmpegStatus.installed) {
+      ffmpegDialogOpen.value = true;
+    }
+  });
 });
 
 async function selectCamera(cam: CameraInfo) {

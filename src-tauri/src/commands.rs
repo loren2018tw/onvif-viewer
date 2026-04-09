@@ -1,4 +1,4 @@
-use crate::models::{CameraInfo, DiscoveredCamera, ScanRange};
+use crate::models::{CameraInfo, DiscoveredCamera, FFmpegStatus, ScanRange};
 use crate::stream::StreamManager;
 use chrono::Utc;
 use std::sync::Arc;
@@ -141,4 +141,34 @@ pub async fn stop_preview(
     let mut manager = state.lock().await;
     manager.stop().await;
     Ok(())
+}
+
+#[tauri::command]
+pub fn check_ffmpeg() -> Result<FFmpegStatus, String> {
+    use std::process::Command;
+
+    let os = std::env::consts::OS;
+
+    // Try to run ffmpeg -version to check if it's installed
+    let output = Command::new("ffmpeg").arg("-version").output();
+
+    match output {
+        Ok(output) if output.status.success() => Ok(FFmpegStatus {
+            installed: true,
+            install_command: String::new(),
+        }),
+        _ => {
+            let install_command = match os {
+                "windows" => "winget install Gyan.FFmpeg".to_string(),
+                "linux" => "apt install ffmpeg".to_string(),
+                "macos" => "brew install ffmpeg".to_string(),
+                _ => "Please install FFmpeg from https://ffmpeg.org/download.html".to_string(),
+            };
+
+            Ok(FFmpegStatus {
+                installed: false,
+                install_command,
+            })
+        }
+    }
 }

@@ -1,7 +1,12 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import type { CameraInfo, DiscoveredCamera, ScanRange } from "@/types/camera";
+import type {
+  CameraInfo,
+  DiscoveredCamera,
+  ScanRange,
+  FFmpegStatus,
+} from "@/types/camera";
 
 export const useCameraStore = defineStore("camera", () => {
   const cameras = ref<CameraInfo[]>([]);
@@ -13,6 +18,7 @@ export const useCameraStore = defineStore("camera", () => {
   const previewUrl = ref<string | null>(null);
   const isPreviewing = ref(false);
   const error = ref<string | null>(null);
+  const ffmpegStatus = ref<FFmpegStatus | null>(null);
 
   async function loadCameras() {
     try {
@@ -222,6 +228,14 @@ export const useCameraStore = defineStore("camera", () => {
     error.value = null;
   }
 
+  async function checkFFmpeg() {
+    try {
+      ffmpegStatus.value = await invoke<FFmpegStatus>("check_ffmpeg");
+    } catch (e) {
+      error.value = String(e);
+    }
+  }
+
   return {
     cameras,
     discoveredCameras,
@@ -232,6 +246,7 @@ export const useCameraStore = defineStore("camera", () => {
     previewUrl,
     isPreviewing,
     error,
+    ffmpegStatus,
     loadCameras,
     discoverCameras,
     scanRange,
@@ -245,5 +260,6 @@ export const useCameraStore = defineStore("camera", () => {
     stopPreview,
     clearStream,
     clearError,
+    checkFFmpeg,
   };
 });

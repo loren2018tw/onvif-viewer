@@ -21,6 +21,7 @@ fn main() {
             onvif_viewer_lib::diagnose_camera,
             onvif_viewer_lib::start_preview,
             onvif_viewer_lib::stop_preview,
+            onvif_viewer_lib::check_ffmpeg,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
