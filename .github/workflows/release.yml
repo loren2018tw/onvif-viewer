@@ -12,7 +12,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [ubuntu-22.04, windows-latest]
+        include:
+          - platform: ubuntu-22.04
+            args: --bundles deb
+          - platform: windows-latest
+            args: --bundles nsis
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout
