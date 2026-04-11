@@ -1,21 +1,40 @@
 use anyhow::{Context, Result};
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use oxvif::OnvifSession;
+use sha1::{Digest, Sha1};
 
 /// Check if a URI looks like a valid RTSP stream URL
 fn is_valid_rtsp_uri(uri: &str) -> bool {
     uri.starts_with("rtsp://") || uri.starts_with("rtsps://")
 }
 
-/// Embed credentials into an RTSP URI if not already present
+/// Embed credentials into an RTSP URI if not already present.
+/// Uses string manipulation to avoid percent-encoding `&` in RTSP paths.
 fn embed_credentials(uri: &str, username: &str, password: &str) -> String {
-    if let Ok(mut parsed) = url::Url::parse(uri) {
-        if parsed.username().is_empty() && !username.is_empty() {
-            let _ = parsed.set_username(username);
-            let _ = parsed.set_password(Some(password));
-            return parsed.to_string();
-        }
+    if username.is_empty() {
+        return uri.to_string();
     }
-    uri.to_string()
+    // Only embed for scheme://authority URLs
+    let scheme_end = match uri.find("://") {
+        Some(pos) => pos + 3,
+        None => return uri.to_string(),
+    };
+    let after_scheme = &uri[scheme_end..];
+    // Already has credentials if '@' appears before the first '/'
+    let first_slash = after_scheme.find('/').unwrap_or(after_scheme.len());
+    if after_scheme[..first_slash].contains('@') {
+        return uri.to_string();
+    }
+    let encoded_user = urlencoding::encode(username);
+    let encoded_pwd = urlencoding::encode(password);
+    format!(
+        "{}{}:{}@{}",
+        &uri[..scheme_end],
+        encoded_user,
+        encoded_pwd,
+        after_scheme
+    )
 }
 
 /// Extract RTSP URI from raw SOAP GetStreamUriResponse XML.
@@ -114,12 +133,17 @@ pub async fn get_stream_uri(
     });
 
     let mut last_raw_uri = String::new();
+    let media_url = session.capabilities().media.url.clone();
 
-    // Try each profile with Media1, then Media2
+    // Try each profile in priority order.
+    // For each profile: first try oxvif Media1 & Media2, then immediately fall back
+    // to raw SOAP (handles &amp; misparse) before moving to the next profile.
+    // This prevents a lower-priority profile (e.g. snapStream) from being returned
+    // when a higher-priority one (mainStream/subStream) only fails due to XML parsing.
     for profile_idx in &profile_indices {
         let profile = &profiles[*profile_idx];
 
-        // Try Media1
+        // Try Media1 via oxvif
         if let Ok(stream_uri) = session.get_stream_uri(&profile.token).await {
             if is_valid_rtsp_uri(&stream_uri.uri) {
                 return Ok(embed_credentials(&stream_uri.uri, username, password));
@@ -127,7 +151,7 @@ pub async fn get_stream_uri(
             last_raw_uri = stream_uri.uri.clone();
         }
 
-        // Try Media2
+        // Try Media2 via oxvif
         if let Ok(uri) = session.get_stream_uri_media2(&profile.token).await {
             if is_valid_rtsp_uri(&uri) {
                 return Ok(embed_credentials(&uri, username, password));
@@ -136,15 +160,11 @@ pub async fn get_stream_uri(
                 last_raw_uri = uri;
             }
         }
-    }
 
-    // Fallback: oxvif may misparse URIs with &amp; entities (e.g. Dahua cameras).
-    // Try raw SOAP request and extract URI ourselves.
-    if let Some(media_url) = &session.capabilities().media.url {
-        for profile_idx in &profile_indices {
-            let profile = &profiles[*profile_idx];
-            if let Ok(raw_xml) =
-                raw_get_stream_uri(media_url, &profile.token, username, password).await
+        // oxvif failed for this profile — try raw SOAP immediately before
+        // falling through to the next (lower-priority) profile.
+        if let Some(ref murl) = media_url {
+            if let Ok(raw_xml) = raw_get_stream_uri(murl, &profile.token, username, password).await
             {
                 if let Some(uri) = extract_uri_from_soap_xml(&raw_xml) {
                     return Ok(embed_credentials(&uri, username, password));
@@ -305,18 +325,55 @@ pub async fn diagnose_camera(
     Ok(report)
 }
 
+/// Build ONVIF WS-UsernameToken PasswordDigest SOAP Security header.
+/// PasswordDigest = Base64(SHA1(Nonce_bytes + Created_string + Password))
+fn build_wsse_header(username: &str, password: &str) -> String {
+    use chrono::Utc;
+
+    // 16-byte random nonce via UUID bytes
+    let nonce_bytes = uuid::Uuid::new_v4().as_bytes().to_vec();
+    let nonce_b64 = BASE64.encode(&nonce_bytes);
+
+    // UTC timestamp in ISO 8601
+    let created = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+
+    // PasswordDigest = Base64(SHA1(nonce_bytes + created_utf8 + password_utf8))
+    let mut hasher = Sha1::new();
+    hasher.update(&nonce_bytes);
+    hasher.update(created.as_bytes());
+    hasher.update(password.as_bytes());
+    let digest_b64 = BASE64.encode(hasher.finalize());
+
+    format!(
+        r#"<s:Header>
+    <wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
+                   xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"
+                   s:mustUnderstand="1">
+      <wsse:UsernameToken>
+        <wsse:Username>{username}</wsse:Username>
+        <wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest">{digest_b64}</wsse:Password>
+        <wsse:Nonce EncodingType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary">{nonce_b64}</wsse:Nonce>
+        <wsu:Created>{created}</wsu:Created>
+      </wsse:UsernameToken>
+    </wsse:Security>
+  </s:Header>"#
+    )
+}
+
 /// Send a raw SOAP GetStreamUri request and return the raw XML response
 async fn raw_get_stream_uri(
     media_url: &str,
     profile_token: &str,
-    _username: &str,
-    _password: &str,
+    username: &str,
+    password: &str,
 ) -> Result<String> {
+    let wsse = build_wsse_header(username, password);
     let soap_body = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"
             xmlns:trt="http://www.onvif.org/ver10/media/wsdl"
             xmlns:tt="http://www.onvif.org/ver10/schema">
+  {wsse}
   <s:Body>
     <trt:GetStreamUri>
       <trt:StreamSetup>
