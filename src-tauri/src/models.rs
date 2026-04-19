@@ -8,6 +8,14 @@ pub struct FFmpegStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewSession {
+    pub session_id: String,
+    pub preview_url: String,
+    pub stream_uri: String,
+    pub has_audio: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CameraInfo {
     pub id: String,
     pub name: String,

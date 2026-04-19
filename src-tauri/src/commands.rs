@@ -1,4 +1,4 @@
-use crate::models::{CameraInfo, DiscoveredCamera, FFmpegStatus, ScanRange};
+use crate::models::{CameraInfo, DiscoveredCamera, FFmpegStatus, PreviewSession, ScanRange};
 use crate::stream::StreamManager;
 use chrono::Utc;
 use std::sync::Arc;
@@ -132,7 +132,7 @@ pub async fn start_preview(
     password: String,
     stream_type: Option<String>,
     state: tauri::State<'_, Arc<Mutex<StreamManager>>>,
-) -> Result<String, String> {
+) -> Result<PreviewSession, String> {
     // First get the RTSP stream URI
     let rtsp_uri = crate::camera::get_stream_uri(
         &address,

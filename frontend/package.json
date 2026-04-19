@@ -13,6 +13,7 @@
     "vue-router": "^4.5.0",
     "pinia": "^3.0.0",
     "vuetify": "^3.8.0",
+    "hls.js": "^1.6.4",
     "@mdi/font": "^7.4.0",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-shell": "^2.0.0"

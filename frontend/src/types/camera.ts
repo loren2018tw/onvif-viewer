@@ -32,4 +32,11 @@ export interface FFmpegStatus {
   install_command: string;
 }
 
+export interface PreviewSession {
+  session_id: string;
+  preview_url: string;
+  stream_uri: string;
+  has_audio: boolean;
+}
+
 export type StreamType = "main" | "sub";

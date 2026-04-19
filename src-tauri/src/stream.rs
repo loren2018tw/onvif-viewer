@@ -1,32 +1,32 @@
+use crate::models::PreviewSession;
 use anyhow::{Context, Result};
 use axum::{
     body::Body,
-    extract::State as AxumState,
-    http::Response,
+    extract::{Path, State as AxumState},
+    http::{Response, StatusCode},
     routing::get,
     Router,
 };
+use std::path::{Component, Path as StdPath, PathBuf};
+use std::process::Stdio;
 use std::sync::Arc;
 use tokio::{
-    io::AsyncReadExt,
     net::TcpListener,
     process::{Child, Command},
-    sync::{broadcast, oneshot},
+    sync::oneshot,
+    time::{sleep, Duration, Instant},
 };
-use std::process::Stdio;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
-const BOUNDARY: &str = "frame";
-const MAX_BUF_SIZE: usize = 4 * 1024 * 1024;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 struct ActiveStream {
+    output_dir: PathBuf,
     ffmpeg: Child,
     shutdown_tx: oneshot::Sender<()>,
-    reader_handle: tokio::task::JoinHandle<()>,
 }
 
 fn hide_window(cmd: &mut Command) {
@@ -45,8 +45,9 @@ pub struct StreamManager {
 }
 
 #[derive(Clone)]
-struct MjpegState {
-    frame_tx: Arc<broadcast::Sender<Vec<u8>>>,
+struct PreviewState {
+    output_dir: Arc<PathBuf>,
+    session_id: Arc<String>,
 }
 
 impl StreamManager {
@@ -54,155 +55,242 @@ impl StreamManager {
         Self { active: None }
     }
 
-    pub async fn start(&mut self, rtsp_uri: &str) -> Result<String> {
+    pub async fn start(&mut self, rtsp_uri: &str) -> Result<PreviewSession> {
         self.stop().await;
 
         // Verify ffmpeg is available
         let mut version_cmd = Command::new("ffmpeg");
-        version_cmd.arg("-version")
+        version_cmd
+            .arg("-version")
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         hide_window(&mut version_cmd);
-        version_cmd.status()
+        version_cmd
+            .status()
             .await
             .context("找不到 ffmpeg，請先安裝 ffmpeg")?;
 
-        // Spawn FFmpeg: RTSP → MJPEG pipe
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let output_dir = std::env::temp_dir()
+            .join("onvif-viewer-preview")
+            .join(&session_id);
+        std::fs::create_dir_all(&output_dir).context("無法建立預覽輸出目錄")?;
+        let playlist_path = output_dir.join("index.m3u8");
+        let segment_pattern = output_dir.join("segment_%03d.ts");
+        let has_audio = probe_has_audio(rtsp_uri).await;
+
+        // Spawn FFmpeg: RTSP → HLS (video + optional audio)
         let mut ffmpeg = Command::new("ffmpeg");
-        ffmpeg.args([
-                "-rtsp_transport", "tcp",
-                "-i", rtsp_uri,
-                "-f", "image2pipe",
-                "-c:v", "mjpeg",
-                "-q:v", "5",
-                "-r", "15",
-                "-an",
-                "pipe:1",
+        ffmpeg
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-rtsp_transport",
+                "tcp",
+                "-i",
+                rtsp_uri,
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a:0?",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-tune",
+                "zerolatency",
+                "-pix_fmt",
+                "yuv420p",
+                "-g",
+                "30",
+                "-sc_threshold",
+                "0",
+                "-c:a",
+                "aac",
+                "-ar",
+                "48000",
+                "-b:a",
+                "128k",
+                "-f",
+                "hls",
+                "-hls_time",
+                "1",
+                "-hls_list_size",
+                "3",
+                "-hls_flags",
+                "delete_segments+append_list+independent_segments+omit_endlist",
+                "-hls_segment_filename",
             ])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .arg(segment_pattern.as_os_str())
+            .arg(playlist_path.as_os_str())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .kill_on_drop(true);
         hide_window(&mut ffmpeg);
-        let mut ffmpeg = ffmpeg.spawn()
-            .context("無法啟動 ffmpeg")?;
+        let mut ffmpeg = ffmpeg.spawn().context("無法啟動 ffmpeg")?;
 
-        let stdout = ffmpeg.stdout.take().context("無法取得 ffmpeg stdout")?;
+        wait_for_playlist(&mut ffmpeg, &playlist_path).await?;
 
-        // Broadcast channel for JPEG frames
-        let (frame_tx, _) = broadcast::channel::<Vec<u8>>(30);
-        let frame_tx = Arc::new(frame_tx);
-
-        // Spawn reader task: parse JPEG frames from ffmpeg stdout
-        let tx_clone = frame_tx.clone();
-        let reader_handle = tokio::spawn(async move {
-            read_jpeg_frames(stdout, tx_clone).await;
-        });
-
-        // Start local MJPEG HTTP server on random port
+        // Start local HLS HTTP server on random port
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let port = listener.local_addr()?.port();
+        let preview_url = format!(
+            "http://127.0.0.1:{}/preview/{}/index.m3u8",
+            port, session_id
+        );
+
+        let state = PreviewState {
+            output_dir: Arc::new(output_dir.clone()),
+            session_id: Arc::new(session_id.clone()),
+        };
 
         let app = Router::new()
-            .route("/stream", get(mjpeg_handler))
-            .with_state(MjpegState { frame_tx: frame_tx.clone() });
+            .route(
+                "/preview/:session_id/index.m3u8",
+                get(hls_file_handler_index),
+            )
+            .route("/preview/:session_id/*file", get(hls_file_handler))
+            .with_state(state);
 
         tokio::spawn(async move {
             axum::serve(listener, app)
-                .with_graceful_shutdown(async { let _ = shutdown_rx.await; })
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
                 .await
                 .ok();
         });
 
         self.active = Some(ActiveStream {
+            output_dir,
             ffmpeg,
             shutdown_tx,
-            reader_handle,
         });
 
-        Ok(format!("http://127.0.0.1:{}/stream", port))
+        Ok(PreviewSession {
+            session_id,
+            preview_url,
+            stream_uri: rtsp_uri.to_string(),
+            has_audio,
+        })
     }
 
     pub async fn stop(&mut self) {
         if let Some(mut active) = self.active.take() {
             let _ = active.shutdown_tx.send(());
-            active.reader_handle.abort();
             let _ = active.ffmpeg.kill().await;
+            let _ = std::fs::remove_dir_all(&active.output_dir);
         }
     }
 }
 
-async fn read_jpeg_frames(
-    mut stdout: tokio::process::ChildStdout,
-    tx: Arc<broadcast::Sender<Vec<u8>>>,
-) {
-    let mut buf = Vec::with_capacity(512 * 1024);
-    let mut temp = [0u8; 65536];
+async fn probe_has_audio(rtsp_uri: &str) -> bool {
+    let mut ffprobe = Command::new("ffprobe");
+    ffprobe.args([
+        "-v",
+        "error",
+        "-rtsp_transport",
+        "tcp",
+        "-select_streams",
+        "a",
+        "-show_entries",
+        "stream=index",
+        "-of",
+        "csv=p=0",
+        rtsp_uri,
+    ]);
+    hide_window(&mut ffprobe);
+
+    match ffprobe.output().await {
+        Ok(output) if output.status.success() => {
+            !String::from_utf8_lossy(&output.stdout).trim().is_empty()
+        }
+        _ => false,
+    }
+}
+
+async fn wait_for_playlist(ffmpeg: &mut Child, playlist_path: &StdPath) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(10);
 
     loop {
-        match stdout.read(&mut temp).await {
-            Ok(0) | Err(_) => break,
-            Ok(n) => {
-                buf.extend_from_slice(&temp[..n]);
-
-                // Prevent unbounded memory growth
-                if buf.len() > MAX_BUF_SIZE {
-                    buf.clear();
-                    continue;
-                }
-
-                // Extract and broadcast complete JPEG frames
-                while let Some(frame) = extract_jpeg(&mut buf) {
-                    let _ = tx.send(frame);
-                }
+        if playlist_path.exists() {
+            let metadata = std::fs::metadata(playlist_path).context("無法讀取預覽播放清單")?;
+            if metadata.len() > 0 {
+                return Ok(());
             }
         }
+
+        if let Some(status) = ffmpeg.try_wait().context("無法確認 ffmpeg 狀態")? {
+            anyhow::bail!("ffmpeg 預覽程序提前結束（狀態碼: {}）", status);
+        }
+
+        if Instant::now() >= deadline {
+            anyhow::bail!("預覽來源建立逾時，尚未產生播放清單");
+        }
+
+        sleep(Duration::from_millis(200)).await;
     }
 }
 
-/// Extract a complete JPEG image from buffer (SOI 0xFFD8 → EOI 0xFFD9)
-fn extract_jpeg(buf: &mut Vec<u8>) -> Option<Vec<u8>> {
-    let soi = buf.windows(2).position(|w| w == [0xFF, 0xD8])?;
-    let search = &buf[soi + 2..];
-    let eoi_offset = search.windows(2).position(|w| w == [0xFF, 0xD9])?;
-    let eoi = soi + 2 + eoi_offset + 2;
-
-    let frame = buf[soi..eoi].to_vec();
-    buf.drain(..eoi);
-    Some(frame)
+async fn hls_file_handler_index(
+    Path(session_id): Path<String>,
+    AxumState(state): AxumState<PreviewState>,
+) -> Result<Response<Body>, StatusCode> {
+    if session_id != *state.session_id {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    serve_file(&state.output_dir, "index.m3u8").await
 }
 
-async fn mjpeg_handler(
-    AxumState(state): AxumState<MjpegState>,
-) -> Response<Body> {
-    let mut rx = state.frame_tx.subscribe();
+async fn hls_file_handler(
+    Path((session_id, file)): Path<(String, String)>,
+    AxumState(state): AxumState<PreviewState>,
+) -> Result<Response<Body>, StatusCode> {
+    if session_id != *state.session_id {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let safe_path = sanitize_relative_path(&file).ok_or(StatusCode::BAD_REQUEST)?;
+    serve_file(&state.output_dir, safe_path.to_str().unwrap()).await
+}
 
-    let stream = async_stream::stream! {
-        loop {
-            match rx.recv().await {
-                Ok(frame) => {
-                    let header = format!(
-                        "--{}\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n",
-                        BOUNDARY,
-                        frame.len()
-                    );
-                    yield Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(header.into_bytes()));
-                    yield Ok(axum::body::Bytes::from(frame));
-                    yield Ok(axum::body::Bytes::from("\r\n"));
-                }
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(broadcast::error::RecvError::Closed) => break,
-            }
-        }
-    };
+async fn serve_file(
+    output_dir: &std::path::Path,
+    file: &str,
+) -> Result<Response<Body>, StatusCode> {
+    let target_path = output_dir.join(file);
+    let content = tokio::fs::read(&target_path)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
 
     Response::builder()
-        .header(
-            "Content-Type",
-            format!("multipart/x-mixed-replace; boundary={}", BOUNDARY),
-        )
+        .status(StatusCode::OK)
+        .header("Content-Type", content_type_for_path(&target_path))
         .header("Cache-Control", "no-cache, no-store, must-revalidate")
         .header("Access-Control-Allow-Origin", "*")
-        .body(Body::from_stream(stream))
-        .unwrap()
+        .body(Body::from(content))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+fn sanitize_relative_path(path: &str) -> Option<PathBuf> {
+    let candidate = PathBuf::from(path);
+    if candidate.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return None;
+    }
+    Some(candidate)
+}
+
+fn content_type_for_path(path: &StdPath) -> &'static str {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("m3u8") => "application/vnd.apple.mpegurl",
+        Some("ts") => "video/mp2t",
+        Some("mp4") => "video/mp4",
+        _ => "application/octet-stream",
+    }
 }

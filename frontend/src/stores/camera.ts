@@ -6,6 +6,7 @@ import type {
   DiscoveredCamera,
   ScanRange,
   FFmpegStatus,
+  PreviewSession,
   StreamType,
 } from "@/types/camera";
 
@@ -17,9 +18,23 @@ export const useCameraStore = defineStore("camera", () => {
   const isLoadingStream = ref(false);
   const currentStreamUri = ref<string | null>(null);
   const previewUrl = ref<string | null>(null);
+  const previewSessionId = ref<string | null>(null);
+  const previewHasAudio = ref(false);
+  const audioEnabled = ref(false);
   const isPreviewing = ref(false);
   const error = ref<string | null>(null);
   const ffmpegStatus = ref<FFmpegStatus | null>(null);
+  let previewRequestId = 0;
+
+  function clearPreviewState() {
+    currentStreamUri.value = null;
+    previewUrl.value = null;
+    previewSessionId.value = null;
+    previewHasAudio.value = false;
+    audioEnabled.value = false;
+    isPreviewing.value = false;
+    isLoadingStream.value = false;
+  }
 
   async function loadCameras() {
     try {
@@ -185,9 +200,7 @@ export const useCameraStore = defineStore("camera", () => {
   }
 
   function clearStream() {
-    currentStreamUri.value = null;
-    previewUrl.value = null;
-    isPreviewing.value = false;
+    clearPreviewState();
   }
 
   async function startPreview(
@@ -197,36 +210,69 @@ export const useCameraStore = defineStore("camera", () => {
     password: string,
     streamType: StreamType = "sub",
   ) {
+    const requestId = ++previewRequestId;
+    currentStreamUri.value = null;
+    previewUrl.value = null;
+    previewSessionId.value = null;
+    previewHasAudio.value = false;
+    audioEnabled.value = false;
+    isPreviewing.value = false;
+    isLoadingStream.value = true;
+
     try {
-      isLoadingStream.value = true;
       error.value = null;
-      const url = await invoke<string>("start_preview", {
+      const preview = await invoke<PreviewSession>("start_preview", {
         address,
         port,
         username,
         password,
         streamType,
       });
-      previewUrl.value = url;
-      isPreviewing.value = true;
+      if (requestId !== previewRequestId) {
+        return;
+      }
+
+      previewUrl.value = preview.preview_url;
+      previewSessionId.value = preview.session_id;
+      currentStreamUri.value = preview.stream_uri;
+      previewHasAudio.value = preview.has_audio;
     } catch (e) {
+      if (requestId !== previewRequestId) {
+        return;
+      }
       error.value = String(e);
-      previewUrl.value = null;
-      isPreviewing.value = false;
-    } finally {
       isLoadingStream.value = false;
+      clearPreviewState();
     }
   }
 
   async function stopPreview() {
+    previewRequestId += 1;
+    clearPreviewState();
     try {
       await invoke("stop_preview");
     } catch (e) {
       error.value = String(e);
-    } finally {
-      previewUrl.value = null;
-      isPreviewing.value = false;
     }
+  }
+
+  function markPreviewReady(sessionId: string) {
+    if (sessionId !== previewSessionId.value) {
+      return;
+    }
+    isLoadingStream.value = false;
+    isPreviewing.value = true;
+  }
+
+  function markPreviewFailed(sessionId?: string) {
+    if (sessionId && sessionId !== previewSessionId.value) {
+      return;
+    }
+    clearPreviewState();
+  }
+
+  function setAudioEnabled(enabled: boolean) {
+    audioEnabled.value = previewHasAudio.value ? enabled : false;
   }
 
   function clearError() {
@@ -249,6 +295,9 @@ export const useCameraStore = defineStore("camera", () => {
     isLoadingStream,
     currentStreamUri,
     previewUrl,
+    previewSessionId,
+    previewHasAudio,
+    audioEnabled,
     isPreviewing,
     error,
     ffmpegStatus,
@@ -263,6 +312,9 @@ export const useCameraStore = defineStore("camera", () => {
     diagnoseCamera,
     startPreview,
     stopPreview,
+    markPreviewReady,
+    markPreviewFailed,
+    setAudioEnabled,
     clearStream,
     clearError,
     checkFFmpeg,

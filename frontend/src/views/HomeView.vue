@@ -190,6 +190,16 @@
               hide-details
               class="mr-2 flex-grow-0"
             />
+            <v-switch
+              v-if="store.previewHasAudio"
+              v-model="audioPlaybackEnabled"
+              label="播放聲音"
+              color="primary"
+              density="compact"
+              hide-details
+              inset
+              class="mr-2 flex-grow-0"
+            />
             <v-chip
               v-if="selectedCamera"
               color="primary"
@@ -220,21 +230,39 @@
             </v-btn>
           </v-card-title>
           <v-card-text class="preview-body d-flex justify-center align-center">
-            <div v-if="store.isLoadingStream" class="text-center">
+            <div
+              v-if="store.isLoadingStream && !store.previewUrl"
+              class="text-center"
+            >
               <v-progress-circular indeterminate color="primary" size="64" />
               <div class="mt-4 text-medium-emphasis">正在連線攝影機...</div>
             </div>
-            <div
-              v-else-if="store.isPreviewing && store.previewUrl"
-              class="w-100 h-100"
-            >
-              <div class="d-flex justify-center align-center preview-frame">
-                <img
-                  :src="store.previewUrl"
-                  alt="攝影機預覽"
-                  class="preview-image"
-                  @error="onStreamError"
+            <div v-else-if="store.previewUrl" class="w-100 h-100">
+              <div
+                class="d-flex justify-center align-center preview-frame preview-stage"
+              >
+                <video
+                  ref="previewVideo"
+                  autoplay
+                  playsinline
+                  controls
+                  class="preview-video"
+                  :class="{ 'preview-video-hidden': !isPreviewVisible }"
+                  @canplay="onPreviewReady"
+                  @loadeddata="onPreviewReady"
+                  @error="onPreviewPlaybackError"
                 />
+                <div
+                  v-if="store.isLoadingStream"
+                  class="preview-overlay text-center"
+                >
+                  <v-progress-circular
+                    indeterminate
+                    color="primary"
+                    size="56"
+                  />
+                  <div class="mt-4 text-medium-emphasis">正在連線攝影機...</div>
+                </div>
               </div>
               <div v-if="store.currentStreamUri" class="mt-3">
                 <v-alert type="info" variant="tonal" density="compact">
@@ -446,7 +474,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from "vue";
+import Hls from "hls.js";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from "vue";
 import { useCameraStore } from "@/stores/camera";
 import type { CameraInfo, DiscoveredCamera, StreamType } from "@/types/camera";
 
@@ -483,10 +519,22 @@ const formData = ref({
 });
 
 const ffmpegDialogOpen = ref(false);
+const previewVideo = ref<HTMLVideoElement | null>(null);
+const isPreviewVisible = ref(false);
 const streamTypeOptions: { title: string; value: StreamType }[] = [
   { title: "副碼流", value: "sub" },
   { title: "主碼流", value: "main" },
 ];
+const audioPlaybackEnabled = computed({
+  get: () => store.audioEnabled,
+  set: (value: boolean) => {
+    store.setAudioEnabled(value);
+    applyAudioPreference();
+  },
+});
+
+let hls: Hls | null = null;
+let attachedSessionId: string | null = null;
 
 watch(
   () => store.error,
@@ -504,16 +552,85 @@ onMounted(() => {
   });
 });
 
+onBeforeUnmount(() => {
+  destroyPreviewPlayer();
+});
+
+watch(
+  () => [store.previewUrl, store.previewSessionId] as const,
+  async ([previewUrl, sessionId]) => {
+    destroyPreviewPlayer();
+
+    if (!previewUrl || !sessionId) {
+      return;
+    }
+
+    await nextTick();
+
+    const video = previewVideo.value;
+    if (!video) {
+      return;
+    }
+
+    attachedSessionId = sessionId;
+    applyAudioPreference();
+
+    if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = previewUrl;
+    } else {
+      hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+      });
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) {
+          onPreviewPlaybackError();
+        }
+      });
+      hls.loadSource(previewUrl);
+      hls.attachMedia(video);
+    }
+
+    video.play().catch(() => {
+      // Waiting for canplay or a user gesture is acceptable here.
+    });
+  },
+);
+
+function destroyPreviewPlayer() {
+  isPreviewVisible.value = false;
+  attachedSessionId = null;
+
+  if (hls) {
+    hls.destroy();
+    hls = null;
+  }
+
+  const video = previewVideo.value;
+  if (video) {
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+  }
+}
+
+function applyAudioPreference() {
+  const video = previewVideo.value;
+  if (!video) {
+    return;
+  }
+
+  video.muted = !store.audioEnabled;
+  if (store.audioEnabled) {
+    video.play().catch(() => {
+      // Browsers may still require an explicit gesture before unmuted playback.
+    });
+  }
+}
+
 async function selectCamera(cam: CameraInfo) {
   selectedCamera.value = cam;
   if (autoPreview.value) {
-    store.getStreamUri(
-      cam.address,
-      cam.onvif_port,
-      cam.username,
-      cam.password,
-      selectedStreamType.value,
-    );
     await store.startPreview(
       cam.address,
       cam.onvif_port,
@@ -529,14 +646,6 @@ async function selectCamera(cam: CameraInfo) {
 async function handlePreview() {
   if (!selectedCamera.value) return;
   const cam = selectedCamera.value;
-  // Get stream URI for display, and start MJPEG preview
-  store.getStreamUri(
-    cam.address,
-    cam.onvif_port,
-    cam.username,
-    cam.password,
-    selectedStreamType.value,
-  );
   await store.startPreview(
     cam.address,
     cam.onvif_port,
@@ -547,12 +656,25 @@ async function handlePreview() {
 }
 
 async function handleStopPreview() {
+  destroyPreviewPlayer();
   await store.stopPreview();
 }
 
-function onStreamError() {
-  // MJPEG stream ended or errored — stop preview state
-  if (store.isPreviewing) {
+function onPreviewReady() {
+  if (!store.previewSessionId || attachedSessionId !== store.previewSessionId) {
+    return;
+  }
+
+  isPreviewVisible.value = true;
+  store.markPreviewReady(store.previewSessionId);
+  applyAudioPreference();
+}
+
+function onPreviewPlaybackError() {
+  const activeSessionId = store.previewSessionId ?? undefined;
+  destroyPreviewPlayer();
+  store.markPreviewFailed(activeSessionId);
+  if (activeSessionId) {
     store.stopPreview();
   }
 }
@@ -730,12 +852,34 @@ async function copyDiagnoseReport() {
   background: #000;
   height: 100%;
   min-height: 320px;
+  position: relative;
 }
 
-.preview-image {
+.preview-stage {
+  overflow: hidden;
+}
+
+.preview-video {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
+  width: 100%;
+  height: 100%;
+  background: #000;
+}
+
+.preview-video-hidden {
+  opacity: 0;
+}
+
+.preview-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.72);
 }
 
 .stream-select {

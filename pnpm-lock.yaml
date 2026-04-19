@@ -49,6 +49,52 @@ importers:
         specifier: ^2.2.0
         version: 2.2.12(typescript@5.7.3)
 
+  frontend:
+    dependencies:
+      '@mdi/font':
+        specifier: ^7.4.0
+        version: 7.4.47
+      '@tauri-apps/api':
+        specifier: ^2.0.0
+        version: 2.10.1
+      '@tauri-apps/plugin-shell':
+        specifier: ^2.0.0
+        version: 2.3.5
+      hls.js:
+        specifier: ^1.6.4
+        version: 1.6.16
+      pinia:
+        specifier: ^3.0.0
+        version: 3.0.4(typescript@5.7.3)(vue@3.5.32(typescript@5.7.3))
+      vue:
+        specifier: ^3.5.0
+        version: 3.5.32(typescript@5.7.3)
+      vue-router:
+        specifier: ^4.5.0
+        version: 4.6.4(vue@3.5.32(typescript@5.7.3))
+      vuetify:
+        specifier: ^3.8.0
+        version: 3.12.5(typescript@5.7.3)(vue@3.5.32(typescript@5.7.3))
+    devDependencies:
+      '@tauri-apps/cli':
+        specifier: ^2.0.0
+        version: 2.10.1
+      '@vitejs/plugin-vue':
+        specifier: ^5.2.0
+        version: 5.2.4(vite@6.4.2(sass@1.99.0))(vue@3.5.32(typescript@5.7.3))
+      sass:
+        specifier: ^1.83.0
+        version: 1.99.0
+      typescript:
+        specifier: ~5.7.0
+        version: 5.7.3
+      vite:
+        specifier: ^6.1.0
+        version: 6.4.2(sass@1.99.0)
+      vue-tsc:
+        specifier: ^2.2.0
+        version: 2.2.12(typescript@5.7.3)
+
 packages:
 
   '@babel/helper-string-parser@7.27.1':
@@ -668,6 +714,9 @@ packages:
   he@1.2.0:
     resolution: {integrity: sha512-F/1DnUGPopORZi0ni+CvrCgHQ5FyEAHRLSApuYWMmrbSwoN2Mn/7k+Gl38gJnR7yyDZk6WLXwiGod1JOWNDKGw==}
     hasBin: true
+
+  hls.js@1.6.16:
+    resolution: {integrity: sha512-VSIRpLfRwlAAdGL4wiTucx2ScRipo0ed1FBatWkyt832jC4CReKstga6yIhYVwGu9LOBjuX9wzmRMeQdBJtzEA==}
 
   hookable@5.5.3:
     resolution: {integrity: sha512-Yc+BQe8SvoXH1643Qez1zqLRmbA5rCL+sSmk6TVos0LWVfNIB7PGncdlId77WzLGSIB5KaWgTaNTs2lNVEI6VQ==}
@@ -1312,6 +1361,8 @@ snapshots:
     optional: true
 
   he@1.2.0: {}
+
+  hls.js@1.6.16: {}
 
   hookable@5.5.3: {}
 
