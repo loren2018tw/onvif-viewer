@@ -4,6 +4,7 @@ use chrono::Utc;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
+use tauri::AppHandle;
 
 #[tauri::command]
 pub async fn discover_onvif_cameras(
@@ -185,4 +186,9 @@ pub fn check_ffmpeg() -> Result<FFmpegStatus, String> {
             })
         }
     }
+}
+
+#[tauri::command]
+pub async fn get_app_version(app: tauri::AppHandle) -> Result<String, String> {
+    Ok(app.package_info().version.to_string())
 }
