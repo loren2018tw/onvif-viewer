@@ -543,6 +543,14 @@ watch(
   },
 );
 
+watch(selectedStreamType, () => {
+  // 若正在預覽（含連線載入中）或開啟了自動預覽，切換碼流時自動重啟
+  const isActive = store.isPreviewing || store.isLoadingStream;
+  if (selectedCamera.value && (isActive || autoPreview.value)) {
+    handlePreview();
+  }
+});
+
 onMounted(() => {
   store.loadCameras();
   store.checkFFmpeg().then(() => {
@@ -620,17 +628,16 @@ function applyAudioPreference() {
     return;
   }
 
+  // 只負責設定靜音狀態，不自己呼叫 play()
   video.muted = !store.audioEnabled;
-  if (store.audioEnabled) {
-    video.play().catch(() => {
-      // Browsers may still require an explicit gesture before unmuted playback.
-    });
-  }
 }
 
 async function selectCamera(cam: CameraInfo) {
   selectedCamera.value = cam;
   if (autoPreview.value) {
+    // 先停止舊的預覽再啟動新的，避免殘留狀態
+    destroyPreviewPlayer();
+    await store.stopPreview();
     await store.startPreview(
       cam.address,
       cam.onvif_port,
@@ -639,6 +646,7 @@ async function selectCamera(cam: CameraInfo) {
       selectedStreamType.value,
     );
   } else {
+    destroyPreviewPlayer();
     store.stopPreview();
   }
 }
@@ -668,6 +676,14 @@ function onPreviewReady() {
   isPreviewVisible.value = true;
   store.markPreviewReady(store.previewSessionId);
   applyAudioPreference();
+
+  // 確保對播放，不管是首次啟動還是切換碼流後都需要重新啟動
+  const video = previewVideo.value;
+  if (video && video.paused) {
+    video.play().catch(() => {
+      // 等待 canplay 或使用者手勢觸發是可接受的
+    });
+  }
 }
 
 function onPreviewPlaybackError() {
@@ -815,7 +831,7 @@ async function copyDiagnoseReport() {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-rows: 1fr 1fr;
+  grid-template-rows: 1fr 2fr;
   gap: 16px;
 }
 
