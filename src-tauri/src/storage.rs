@@ -15,8 +15,9 @@ pub fn load_cameras() -> Result<Vec<CameraInfo>> {
         return Ok(Vec::new());
     }
     let content = std::fs::read_to_string(&path).context("Failed to read cameras file")?;
-    let cameras: Vec<CameraInfo> =
+    let mut cameras: Vec<CameraInfo> =
         serde_json::from_str(&content).context("Failed to parse cameras file")?;
+    cameras.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Ok(cameras)
 }
 
