@@ -116,10 +116,21 @@
                 <v-icon>mdi-plus</v-icon>
               </v-btn>
             </v-card-title>
+            <div class="px-4 pb-2">
+              <v-text-field
+                v-model="savedCameraFilter"
+                label="快速篩選"
+                placeholder="輸入名稱、位址或連接埠"
+                density="compact"
+                hide-details
+                clearable
+                prepend-inner-icon="mdi-filter-variant"
+              />
+            </div>
             <div class="list-scroll">
-              <v-list v-if="store.cameras.length > 0" density="compact">
+              <v-list v-if="filteredSavedCameras.length > 0" density="compact">
                 <v-list-item
-                  v-for="cam in store.cameras"
+                  v-for="cam in filteredSavedCameras"
                   :key="cam.id"
                   :active="selectedCamera?.id === cam.id"
                   @click="selectCamera(cam)"
@@ -155,7 +166,11 @@
                 </v-list-item>
               </v-list>
               <v-card-text v-else class="text-center text-medium-emphasis">
-                尚無儲存的攝影機
+                {{
+                  store.cameras.length === 0
+                    ? "尚無儲存的攝影機"
+                    : "找不到符合篩選條件的攝影機"
+                }}
               </v-card-text>
             </div>
           </v-card>
@@ -492,6 +507,7 @@ const searchTab = ref("auto");
 const scanStartIp = ref("192.168.1.1");
 const scanEndIp = ref("192.168.1.254");
 const scanPort = ref(80);
+const savedCameraFilter = ref("");
 const selectedCamera = ref<CameraInfo | null>(null);
 const selectedStreamType = ref<StreamType>("sub");
 const autoPreview = ref(false);
@@ -531,6 +547,17 @@ const audioPlaybackEnabled = computed({
     store.setAudioEnabled(value);
     applyAudioPreference();
   },
+});
+const filteredSavedCameras = computed(() => {
+  const keyword = savedCameraFilter.value.trim().toLowerCase();
+  if (!keyword) {
+    return store.cameras;
+  }
+
+  return store.cameras.filter((cam) => {
+    const searchableText = `${cam.name} ${cam.address} ${cam.onvif_port}`.toLowerCase();
+    return searchableText.includes(keyword);
+  });
 });
 
 let hls: Hls | null = null;
