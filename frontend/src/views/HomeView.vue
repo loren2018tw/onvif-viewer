@@ -3,120 +3,26 @@
     <v-row class="home-row">
       <!-- Left panel: Camera list & discovery -->
       <v-col cols="12" lg="4" class="left-panel">
-        <v-card class="mb-4 flex-shrink-0">
-          <v-card-title class="d-flex align-center">
-            <v-icon class="mr-2">mdi-magnify</v-icon>
-            搜尋攝影機
-          </v-card-title>
-          <v-card-text>
-            <v-tabs v-model="searchTab" density="compact" class="mb-3">
-              <v-tab value="auto">自動搜尋</v-tab>
-              <v-tab value="manual">手動掃描</v-tab>
+        <v-card class="left-panel-card">
+          <div class="left-panel-header d-flex align-center pr-2">
+            <v-tabs v-model="leftTab" density="compact" class="flex-grow-1">
+              <v-tab value="saved">已儲存攝影機</v-tab>
+              <v-tab value="search">搜尋攝影機</v-tab>
             </v-tabs>
-
-            <div v-if="searchTab === 'auto'">
-              <v-btn
-                block
-                color="primary"
-                :loading="store.isDiscovering"
-                @click="store.discoverCameras(5)"
-              >
-                <v-icon class="mr-1">mdi-radar</v-icon>
-                搜尋本地攝影機
-              </v-btn>
-            </div>
-
-            <div v-else>
-              <v-text-field
-                v-model="scanStartIp"
-                label="起始 IP"
-                placeholder="192.168.1.1"
-                density="compact"
-                class="mb-2"
-              />
-              <v-text-field
-                v-model="scanEndIp"
-                label="結束 IP"
-                placeholder="192.168.1.254"
-                density="compact"
-                class="mb-2"
-              />
-              <v-text-field
-                v-model.number="scanPort"
-                label="ONVIF 連接埠"
-                type="number"
-                density="compact"
-                class="mb-2"
-              />
-              <v-btn
-                block
-                color="primary"
-                :loading="store.isScanning"
-                :disabled="!scanStartIp || !scanEndIp"
-                @click="handleScanRange"
-              >
-                <v-icon class="mr-1">mdi-ip-network</v-icon>
-                掃描範圍
-              </v-btn>
-            </div>
-          </v-card-text>
-        </v-card>
-
-        <div class="list-split">
-          <!-- Discovered cameras -->
-          <v-card class="list-card">
-            <v-card-title class="text-subtitle-1 d-flex align-center">
-              <v-icon class="mr-2">mdi-access-point</v-icon>
-              搜尋結果 ({{ store.discoveredCameras.length }})
-            </v-card-title>
-            <div class="list-scroll">
-              <v-list
-                v-if="store.discoveredCameras.length > 0"
-                density="compact"
-              >
-                <v-list-item
-                  v-for="(cam, idx) in store.discoveredCameras"
-                  :key="idx"
-                  @click="openAddDialog(cam)"
-                >
-                  <template #prepend>
-                    <v-icon color="success">mdi-camera</v-icon>
-                  </template>
-                  <v-list-item-title>{{
-                    cam.name || cam.address
-                  }}</v-list-item-title>
-                  <v-list-item-subtitle
-                    >{{ cam.address }}:{{ cam.port }}</v-list-item-subtitle
-                  >
-                  <template #append>
-                    <v-btn
-                      icon
-                      size="small"
-                      color="primary"
-                      @click.stop="openAddDialog(cam)"
-                    >
-                      <v-icon>mdi-plus</v-icon>
-                    </v-btn>
-                  </template>
-                </v-list-item>
-              </v-list>
-              <v-card-text v-else class="text-center text-medium-emphasis">
-                尚無搜尋結果
-              </v-card-text>
-            </div>
-          </v-card>
+            <v-btn
+              icon
+              size="small"
+              aria-label="新增攝影機"
+              title="新增攝影機"
+              @click="openAddDialog()"
+            >
+              <v-icon>mdi-plus</v-icon>
+            </v-btn>
+          </div>
 
           <!-- Saved cameras -->
-          <v-card class="list-card">
-            <v-card-title class="d-flex align-center">
-              <v-icon class="mr-2">mdi-bookmark</v-icon>
-              已儲存攝影機
-              <v-spacer />
-              <v-btn icon size="small" @click="openAddDialog()">
-                <v-icon>mdi-plus</v-icon>
-              </v-btn>
-            </v-card-title>
-            <div class="px-4 pb-2">
+          <div v-show="leftTab === 'saved'" class="tab-page">
+            <div class="px-4 pt-3 pb-2 d-flex align-center">
               <v-text-field
                 v-model="savedCameraFilter"
                 label="快速篩選"
@@ -126,6 +32,9 @@
                 clearable
                 prepend-inner-icon="mdi-filter-variant"
               />
+              <span class="text-caption text-medium-emphasis text-no-wrap ml-3">
+                {{ savedCountLabel }}
+              </span>
             </div>
             <div class="list-scroll">
               <v-list v-if="filteredSavedCameras.length > 0" density="compact">
@@ -173,8 +82,131 @@
                 }}
               </v-card-text>
             </div>
-          </v-card>
-        </div>
+          </div>
+
+          <!-- Discovered cameras -->
+          <div v-show="leftTab === 'search'" class="tab-page">
+            <div class="px-4 pt-3 pb-2 flex-shrink-0">
+              <v-btn-toggle
+                v-model="searchTab"
+                mandatory
+                density="compact"
+                divided
+                variant="outlined"
+                class="w-100 mb-3"
+              >
+                <v-btn value="auto" class="flex-grow-1">自動搜尋</v-btn>
+                <v-btn value="manual" class="flex-grow-1">手動掃描</v-btn>
+              </v-btn-toggle>
+
+              <div v-if="searchTab === 'auto'">
+                <v-btn
+                  block
+                  color="primary"
+                  :loading="store.isDiscovering"
+                  @click="store.discoverCameras(5)"
+                >
+                  <v-icon class="mr-1">mdi-radar</v-icon>
+                  搜尋本地攝影機
+                </v-btn>
+              </div>
+
+              <div v-else>
+                <v-text-field
+                  v-model="scanStartIp"
+                  label="起始 IP"
+                  placeholder="192.168.1.1"
+                  density="compact"
+                  class="mb-2"
+                />
+                <v-text-field
+                  v-model="scanEndIp"
+                  label="結束 IP"
+                  placeholder="192.168.1.254"
+                  density="compact"
+                  class="mb-2"
+                />
+                <v-text-field
+                  v-model.number="scanPort"
+                  label="ONVIF 連接埠"
+                  type="number"
+                  density="compact"
+                  class="mb-2"
+                />
+                <v-btn
+                  block
+                  color="primary"
+                  :loading="store.isScanning"
+                  :disabled="!scanStartIp || !scanEndIp"
+                  @click="handleScanRange"
+                >
+                  <v-icon class="mr-1">mdi-ip-network</v-icon>
+                  掃描範圍
+                </v-btn>
+              </div>
+            </div>
+
+            <div class="px-4 pb-2 d-flex align-center flex-shrink-0">
+              <span class="text-subtitle-2">
+                搜尋結果 ({{ store.discoveredCameras.length }})
+              </span>
+              <v-spacer />
+              <span
+                v-if="hiddenSavedCount > 0"
+                class="text-caption text-medium-emphasis mr-1"
+              >
+                已隱藏 {{ hiddenSavedCount }} 台
+              </span>
+              <v-checkbox
+                v-model="hideSavedCameras"
+                label="隱藏已儲存"
+                density="compact"
+                hide-details
+                class="flex-grow-0"
+              />
+            </div>
+
+            <div class="list-scroll">
+              <v-list
+                v-if="visibleDiscoveredCameras.length > 0"
+                density="compact"
+              >
+                <v-list-item
+                  v-for="(cam, idx) in visibleDiscoveredCameras"
+                  :key="idx"
+                  @click="openAddDialog(cam)"
+                >
+                  <template #prepend>
+                    <v-icon color="success">mdi-camera</v-icon>
+                  </template>
+                  <v-list-item-title>{{
+                    cam.name || cam.address
+                  }}</v-list-item-title>
+                  <v-list-item-subtitle
+                    >{{ cam.address }}:{{ cam.port }}</v-list-item-subtitle
+                  >
+                  <template #append>
+                    <v-btn
+                      icon
+                      size="small"
+                      color="primary"
+                      @click.stop="openAddDialog(cam)"
+                    >
+                      <v-icon>mdi-plus</v-icon>
+                    </v-btn>
+                  </template>
+                </v-list-item>
+              </v-list>
+              <v-card-text v-else class="text-center text-medium-emphasis">
+                {{
+                  store.discoveredCameras.length === 0
+                    ? "尚無搜尋結果"
+                    : "搜尋結果皆已儲存"
+                }}
+              </v-card-text>
+            </div>
+          </div>
+        </v-card>
       </v-col>
 
       <!-- Right panel: Preview -->
@@ -504,10 +536,18 @@ import type { CameraInfo, DiscoveredCamera, StreamType } from "@/types/camera";
 const store = useCameraStore();
 
 const searchTab = ref("auto");
+const leftTab = ref("saved");
 const scanStartIp = ref("192.168.1.1");
 const scanEndIp = ref("192.168.1.254");
 const scanPort = ref(80);
-const savedCameraFilter = ref("");
+// Vuetify 的 clearable 會把 modelValue 設成 null；篩選字串的契約是「永遠是 string」
+const savedCameraFilterText = ref("");
+const savedCameraFilter = computed({
+  get: (): string => savedCameraFilterText.value,
+  set: (value: string | null) => {
+    savedCameraFilterText.value = value ?? "";
+  },
+});
 const selectedCamera = ref<CameraInfo | null>(null);
 const selectedStreamType = ref<StreamType>("sub");
 const autoPreview = ref(false);
@@ -559,6 +599,33 @@ const filteredSavedCameras = computed(() => {
     return searchableText.includes(keyword);
   });
 });
+
+const savedCountLabel = computed(() => {
+  const total = store.cameras.length;
+  const visible = filteredSavedCameras.value.length;
+  return visible === total ? `共 ${total} 台` : `${visible} / ${total} 台`;
+});
+
+const hideSavedCameras = ref(false);
+
+// 與後端 storage.rs 的去重鍵一致：address + port
+function isSavedCamera(cam: DiscoveredCamera) {
+  return store.cameras.some(
+    (saved) => saved.address === cam.address && saved.onvif_port === cam.port,
+  );
+}
+
+const visibleDiscoveredCameras = computed(() =>
+  hideSavedCameras.value
+    ? store.discoveredCameras.filter((cam) => !isSavedCamera(cam))
+    : store.discoveredCameras,
+);
+
+const hiddenSavedCount = computed(() =>
+  hideSavedCameras.value
+    ? store.discoveredCameras.length - visibleDiscoveredCameras.value.length
+    : 0,
+);
 
 let hls: Hls | null = null;
 let attachedSessionId: string | null = null;
@@ -854,18 +921,22 @@ async function copyDiagnoseReport() {
   height: 100%;
 }
 
-.list-split {
+.left-panel-card {
   flex: 1;
   min-height: 0;
-  display: grid;
-  grid-template-rows: 1fr 2fr;
-  gap: 16px;
-}
-
-.list-card {
   display: flex;
   flex-direction: column;
+}
+
+.left-panel-header {
+  flex: 0 0 auto;
+}
+
+.tab-page {
+  flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .list-scroll {
@@ -936,14 +1007,17 @@ async function copyDiagnoseReport() {
     min-height: 0;
   }
 
-  .left-panel,
-  .right-panel {
+  .home-row {
     height: auto;
   }
 
-  .list-split {
+  .left-panel {
+    height: calc(100vh - 96px);
+    min-height: 520px;
+  }
+
+  .right-panel {
     height: auto;
-    grid-template-rows: minmax(220px, 1fr) minmax(220px, 1fr);
   }
 
   .preview-card {
