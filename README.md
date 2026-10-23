@@ -41,8 +41,15 @@ sudo apt install -y \
   wget \
   file \
   libssl-dev \
-  libxdo-dev
+  libxdo-dev \
+  gstreamer1.0-libav \
+  gstreamer1.0-plugins-bad \
+  gstreamer1.0-plugins-ugly
 ```
+
+> `gstreamer1.0-libav`、`gstreamer1.0-plugins-bad` 與 `gstreamer1.0-plugins-ugly`
+> 是 H.264 預覽播放的必要解碼外掛。缺少時攝影機可以搜尋、檢測，但預覽會
+> 一直停在「ESTABLISHING UPLINK」。
 
 ## 建置與執行
 

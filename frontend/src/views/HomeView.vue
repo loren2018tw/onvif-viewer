@@ -289,7 +289,7 @@
                 預覽
               </v-btn>
               <v-btn
-                v-if="store.isPreviewing"
+                v-if="store.isPreviewing || store.isLoadingStream"
                 color="error"
                 size="small"
                 @click="handleStopPreview"
@@ -387,7 +387,7 @@
     </v-row>
 
     <!-- Error snackbar -->
-    <v-snackbar v-model="showError" color="error" timeout="5000">
+    <v-snackbar v-model="showError" color="error" timeout="10000">
       {{ store.error }}
       <template #actions>
         <v-btn
@@ -675,6 +675,63 @@ const hiddenSavedCount = computed(() =>
 
 let hls: Hls | null = null;
 let attachedSessionId: string | null = null;
+let playbackTimeoutId: ReturnType<typeof setTimeout> | null = null;
+const PLAYBACK_START_TIMEOUT_MS = 20000;
+
+function clearPlaybackTimeout() {
+  if (playbackTimeoutId !== null) {
+    clearTimeout(playbackTimeoutId);
+    playbackTimeoutId = null;
+  }
+}
+
+function armPlaybackTimeout(sessionId: string) {
+  clearPlaybackTimeout();
+  playbackTimeoutId = setTimeout(() => {
+    playbackTimeoutId = null;
+    if (
+      attachedSessionId === sessionId &&
+      store.previewSessionId === sessionId &&
+      !store.isPreviewing
+    ) {
+      failPreviewPlayback(
+        sessionId,
+        "預覽播放逾時，影片解碼器可能未正確載入。若持續發生，請檢查系統的 H.264 解碼支援。",
+      );
+    }
+  }, PLAYBACK_START_TIMEOUT_MS);
+}
+
+function canUseHlsJs() {
+  if (!Hls.isSupported() || typeof MediaSource === "undefined") {
+    return false;
+  }
+
+  try {
+    return MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E"');
+  } catch {
+    return false;
+  }
+}
+
+function playbackUnsupportedMessage() {
+  if (navigator.userAgent.includes("Linux")) {
+    return "無法播放 H.264 串流：WebView 缺少影音解碼外掛。請安裝 gstreamer1.0-libav、gstreamer1.0-plugins-bad、gstreamer1.0-plugins-ugly 後重新啟動應用程式。";
+  }
+  return "目前的系統不支援 H.264 串流播放（缺少 Media Source 解碼支援）。";
+}
+
+function failPreviewPlayback(sessionId: string | undefined, message: string) {
+  if (sessionId && store.previewSessionId !== sessionId) {
+    return;
+  }
+
+  destroyPreviewPlayer();
+  store.markPreviewFailed(sessionId, message);
+  if (sessionId) {
+    store.stopPreview();
+  }
+}
 
 watch(
   () => store.error,
@@ -717,6 +774,7 @@ watch(
 
     const video = previewVideo.value;
     if (!video) {
+      failPreviewPlayback(sessionId, "無法建立預覽播放器，請重新嘗試。");
       return;
     }
 
@@ -725,19 +783,31 @@ watch(
 
     if (video.canPlayType("application/vnd.apple.mpegurl")) {
       video.src = previewUrl;
-    } else {
+    } else if (canUseHlsJs()) {
       hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
       });
       hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data.fatal) {
-          onPreviewPlaybackError();
+        if (!data.fatal) {
+          return;
         }
+        failPreviewPlayback(
+          sessionId,
+          `串流播放失敗（${data.type} / ${data.details}）`,
+        );
       });
       hls.loadSource(previewUrl);
       hls.attachMedia(video);
+    } else {
+      // WebView 回報支援 MSE，但實際上無法解碼 H.264（例如 Linux 缺少
+      // GStreamer 外掛）。hls.js 不會發出錯誤，只會停在載入中，因此這裡
+      // 主動偵測並回報，避免畫面一直轉圈圈。
+      failPreviewPlayback(sessionId, playbackUnsupportedMessage());
+      return;
     }
+
+    armPlaybackTimeout(sessionId);
 
     video.play().catch(() => {
       // Waiting for canplay or a user gesture is acceptable here.
@@ -746,6 +816,7 @@ watch(
 );
 
 function destroyPreviewPlayer() {
+  clearPlaybackTimeout();
   isPreviewVisible.value = false;
   attachedSessionId = null;
 
@@ -813,6 +884,7 @@ function onPreviewReady() {
     return;
   }
 
+  clearPlaybackTimeout();
   isPreviewVisible.value = true;
   store.markPreviewReady(store.previewSessionId);
   applyAudioPreference();
@@ -827,12 +899,10 @@ function onPreviewReady() {
 }
 
 function onPreviewPlaybackError() {
-  const activeSessionId = store.previewSessionId ?? undefined;
-  destroyPreviewPlayer();
-  store.markPreviewFailed(activeSessionId);
-  if (activeSessionId) {
-    store.stopPreview();
-  }
+  failPreviewPlayback(
+    store.previewSessionId ?? undefined,
+    "影片播放失敗，請確認攝影機的 RTSP 串流是否正常。",
+  );
 }
 
 function handleScanRange() {

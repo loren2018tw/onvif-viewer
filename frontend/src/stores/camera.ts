@@ -264,9 +264,12 @@ export const useCameraStore = defineStore("camera", () => {
     isPreviewing.value = true;
   }
 
-  function markPreviewFailed(sessionId?: string) {
+  function markPreviewFailed(sessionId?: string, message?: string) {
     if (sessionId && sessionId !== previewSessionId.value) {
       return;
+    }
+    if (message) {
+      error.value = message;
     }
     clearPreviewState();
   }

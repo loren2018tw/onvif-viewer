@@ -14,7 +14,7 @@ use tokio::{
     net::TcpListener,
     process::{Child, Command},
     sync::oneshot,
-    time::{sleep, Duration, Instant},
+    time::{sleep, timeout, Duration, Instant},
 };
 
 #[cfg(windows)]
@@ -77,6 +77,7 @@ impl StreamManager {
         std::fs::create_dir_all(&output_dir).context("無法建立預覽輸出目錄")?;
         let playlist_path = output_dir.join("index.m3u8");
         let segment_pattern = output_dir.join("segment_%03d.ts");
+        let ffmpeg_log_path = output_dir.join("ffmpeg.log");
         let has_audio = probe_has_audio(rtsp_uri).await;
 
         // Spawn FFmpeg: RTSP → HLS (video + optional audio)
@@ -125,12 +126,22 @@ impl StreamManager {
             .arg(segment_pattern.as_os_str())
             .arg(playlist_path.as_os_str())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::from(
+                std::fs::File::create(&ffmpeg_log_path).context("無法建立預覽記錄檔")?,
+            ))
             .kill_on_drop(true);
         hide_window(&mut ffmpeg);
         let mut ffmpeg = ffmpeg.spawn().context("無法啟動 ffmpeg")?;
 
-        wait_for_playlist(&mut ffmpeg, &playlist_path).await?;
+        if let Err(err) = wait_for_playlist(&mut ffmpeg, &playlist_path).await {
+            let _ = ffmpeg.kill().await;
+            let details = read_ffmpeg_log(&ffmpeg_log_path).await;
+            let _ = std::fs::remove_dir_all(&output_dir);
+            return Err(match details {
+                Some(details) => err.context(format!("ffmpeg 輸出：{details}")),
+                None => err,
+            });
+        }
 
         // Start local HLS HTTP server on random port
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -188,27 +199,53 @@ impl StreamManager {
 
 async fn probe_has_audio(rtsp_uri: &str) -> bool {
     let mut ffprobe = Command::new("ffprobe");
-    ffprobe.args([
-        "-v",
-        "error",
-        "-rtsp_transport",
-        "tcp",
-        "-select_streams",
-        "a",
-        "-show_entries",
-        "stream=index",
-        "-of",
-        "csv=p=0",
-        rtsp_uri,
-    ]);
+    ffprobe
+        .args([
+            "-v",
+            "error",
+            "-rtsp_transport",
+            "tcp",
+            "-select_streams",
+            "a",
+            "-show_entries",
+            "stream=index",
+            "-of",
+            "csv=p=0",
+            rtsp_uri,
+        ])
+        .kill_on_drop(true);
     hide_window(&mut ffprobe);
 
-    match ffprobe.output().await {
-        Ok(output) if output.status.success() => {
+    // 音訊偵測只是附加功能，不能讓它卡住整個預覽流程。
+    match timeout(Duration::from_secs(5), ffprobe.output()).await {
+        Ok(Ok(output)) if output.status.success() => {
             !String::from_utf8_lossy(&output.stdout).trim().is_empty()
+        }
+        Ok(Err(err)) => {
+            eprintln!("ffprobe 音訊偵測失敗，略過音訊：{err}");
+            false
+        }
+        Err(_) => {
+            eprintln!("ffprobe 音訊偵測逾時，略過音訊");
+            false
         }
         _ => false,
     }
+}
+
+async fn read_ffmpeg_log(log_path: &StdPath) -> Option<String> {
+    let content = tokio::fs::read_to_string(log_path).await.ok()?;
+    let lines: Vec<&str> = content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if lines.is_empty() {
+        return None;
+    }
+
+    let start = lines.len().saturating_sub(5);
+    Some(lines[start..].join(" | "))
 }
 
 async fn wait_for_playlist(ffmpeg: &mut Child, playlist_path: &StdPath) -> Result<()> {

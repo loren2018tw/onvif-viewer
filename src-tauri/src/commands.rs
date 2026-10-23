@@ -133,15 +133,20 @@ pub async fn start_preview(
     stream_type: Option<String>,
     state: tauri::State<'_, Arc<Mutex<StreamManager>>>,
 ) -> Result<PreviewSession, String> {
-    // First get the RTSP stream URI
-    let rtsp_uri = crate::camera::get_stream_uri(
-        &address,
-        port,
-        &username,
-        &password,
-        stream_type.as_deref().unwrap_or("sub"),
+    // First get the RTSP stream URI. Some cameras never answer the ONVIF
+    // request, so bound it instead of leaving the UI spinning forever.
+    let rtsp_uri = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        crate::camera::get_stream_uri(
+            &address,
+            port,
+            &username,
+            &password,
+            stream_type.as_deref().unwrap_or("sub"),
+        ),
     )
     .await
+    .map_err(|_| "取得 RTSP 串流位址逾時（20 秒），請確認攝影機的 RTSP 連線是否正常".to_string())?
     .map_err(|e| e.to_string())?;
 
     let mut manager = state.lock().await;
