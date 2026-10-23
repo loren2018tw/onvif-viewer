@@ -3,7 +3,11 @@
     <v-row class="home-row">
       <!-- Left panel: Camera list & discovery -->
       <v-col cols="12" lg="4" class="left-panel">
-        <v-card class="left-panel-card">
+        <v-card class="left-panel-card glass-panel">
+          <div class="cx-panel-strip">
+            <span class="cx-hud-label">NODE REGISTRY</span>
+            <span class="cx-strip-meta">ONVIF / DISCOVERY</span>
+          </div>
           <div class="left-panel-header d-flex align-center pr-2">
             <v-tabs v-model="leftTab" density="compact" class="flex-grow-1">
               <v-tab value="saved">已儲存攝影機</v-tab>
@@ -32,7 +36,7 @@
                 clearable
                 prepend-inner-icon="mdi-filter-variant"
               />
-              <span class="text-caption text-medium-emphasis text-no-wrap ml-3">
+              <span class="cx-count ml-3">
                 {{ savedCountLabel }}
               </span>
             </div>
@@ -147,8 +151,9 @@
             </div>
 
             <div class="px-4 pb-2 d-flex align-center flex-shrink-0">
-              <span class="text-subtitle-2">
-                搜尋結果 ({{ store.discoveredCameras.length }})
+              <span class="cx-result-label">
+                搜尋結果
+                <b>{{ store.discoveredCameras.length }}</b>
               </span>
               <v-spacer />
               <span
@@ -211,83 +216,112 @@
 
       <!-- Right panel: Preview -->
       <v-col cols="12" lg="8" class="right-panel">
-        <v-card class="preview-card">
+        <v-card class="preview-card glass-panel">
           <v-card-title
-            class="d-flex align-center flex-wrap"
+            class="d-flex align-center flex-wrap preview-header"
             style="row-gap: 8px; column-gap: 8px"
           >
-            <v-icon class="mr-2">mdi-monitor</v-icon>
-            即時預覽
-            <v-spacer />
-            <v-select
-              v-model="selectedStreamType"
-              :items="streamTypeOptions"
-              item-title="title"
-              item-value="value"
-              label="碼流"
-              density="compact"
-              hide-details
-              variant="outlined"
-              class="stream-select"
-            />
-            <v-checkbox
-              v-model="autoPreview"
-              label="自動預覽"
-              density="compact"
-              hide-details
-              class="mr-2 flex-grow-0"
-            />
-            <v-switch
-              v-if="store.previewHasAudio"
-              v-model="audioPlaybackEnabled"
-              label="播放聲音"
-              color="primary"
-              density="compact"
-              hide-details
-              inset
-              class="mr-2 flex-grow-0"
-            />
-            <v-chip
-              v-if="selectedCamera"
-              color="primary"
-              size="small"
-              class="mr-2"
-            >
-              {{ selectedCamera.name }}
-            </v-chip>
-            <v-btn
-              v-if="selectedCamera"
-              color="primary"
-              size="small"
-              :loading="store.isLoadingStream"
-              @click="handlePreview"
-            >
-              <v-icon class="mr-1">mdi-play</v-icon>
-              預覽
-            </v-btn>
-            <v-btn
-              v-if="store.isPreviewing"
-              color="error"
-              size="small"
-              class="ml-2"
-              @click="handleStopPreview"
-            >
-              <v-icon class="mr-1">mdi-stop</v-icon>
-              停止
-            </v-btn>
+            <div class="preview-heading">
+              <span class="preview-heading-icon">
+                <v-icon>mdi-monitor</v-icon>
+              </span>
+              <span class="preview-heading-text">
+                <span class="cx-hud-label">LIVE FEED</span>
+                <span class="preview-heading-title">即時預覽</span>
+              </span>
+              <span v-if="store.isPreviewing" class="cx-live-badge">
+                <span class="cx-live-dot"></span>
+                LIVE
+              </span>
+              <span
+                v-else-if="store.isLoadingStream"
+                class="cx-live-badge is-pending"
+              >
+                <span class="cx-live-dot"></span>
+                LINKING
+              </span>
+            </div>
+            <div class="preview-toolbar">
+              <v-select
+                v-model="selectedStreamType"
+                :items="streamTypeOptions"
+                item-title="title"
+                item-value="value"
+                label="碼流"
+                density="compact"
+                hide-details
+                variant="outlined"
+                class="stream-select"
+              />
+              <v-checkbox
+                v-model="autoPreview"
+                label="自動預覽"
+                density="compact"
+                hide-details
+                class="flex-grow-0"
+              />
+              <v-switch
+                v-if="store.previewHasAudio"
+                v-model="audioPlaybackEnabled"
+                label="播放聲音"
+                color="primary"
+                density="compact"
+                hide-details
+                inset
+                class="flex-grow-0"
+              />
+              <v-chip
+                v-if="selectedCamera"
+                color="primary"
+                size="small"
+                class="cx-camera-chip"
+              >
+                {{ selectedCamera.name }}
+              </v-chip>
+              <v-btn
+                v-if="selectedCamera"
+                color="primary"
+                size="small"
+                :loading="store.isLoadingStream"
+                @click="handlePreview"
+              >
+                <v-icon class="mr-1">mdi-play</v-icon>
+                預覽
+              </v-btn>
+              <v-btn
+                v-if="store.isPreviewing"
+                color="error"
+                size="small"
+                @click="handleStopPreview"
+              >
+                <v-icon class="mr-1">mdi-stop</v-icon>
+                停止
+              </v-btn>
+            </div>
           </v-card-title>
           <v-card-text class="preview-body d-flex justify-center align-center">
             <div
               v-if="store.isLoadingStream && !store.previewUrl"
-              class="text-center"
+              class="text-center cx-boot"
             >
-              <v-progress-circular indeterminate color="primary" size="64" />
-              <div class="mt-4 text-medium-emphasis">正在連線攝影機...</div>
+              <div class="cx-boot-ring">
+                <v-progress-circular indeterminate color="primary" size="64" />
+              </div>
+              <div class="cx-boot-title">ESTABLISHING UPLINK</div>
+              <div class="mt-2 text-medium-emphasis">正在連線攝影機...</div>
             </div>
-            <div v-else-if="store.previewUrl" class="w-100 h-100">
+            <div
+              v-else-if="store.previewUrl"
+              class="w-100 h-100 preview-content"
+            >
               <div
-                class="d-flex justify-center align-center preview-frame preview-stage"
+                class="d-flex justify-center align-center preview-frame preview-stage cx-preview-frame"
               >
+                <span class="cx-corner cx-tl" aria-hidden="true"></span>
+                <span class="cx-corner cx-tr" aria-hidden="true"></span>
+                <span class="cx-corner cx-bl" aria-hidden="true"></span>
+                <span class="cx-corner cx-br" aria-hidden="true"></span>
+                <span class="cx-preview-grid" aria-hidden="true"></span>
                 <video
                   ref="previewVideo"
                   autoplay
@@ -299,24 +333,32 @@
                   @loadeddata="onPreviewReady"
                   @error="onPreviewPlaybackError"
                 />
+                <span class="cx-preview-scan" aria-hidden="true"></span>
                 <div
                   v-if="store.isLoadingStream"
-                  class="preview-overlay text-center"
+                  class="preview-overlay text-center cx-loading-overlay"
                 >
                   <v-progress-circular
                     indeterminate
                     color="primary"
                     size="56"
                   />
-                  <div class="mt-4 text-medium-emphasis">正在連線攝影機...</div>
+                  <div class="cx-loading-title">ESTABLISHING UPLINK</div>
+                  <div class="mt-1 text-medium-emphasis">正在連線攝影機...</div>
                 </div>
               </div>
               <div v-if="store.currentStreamUri" class="mt-3">
-                <v-alert type="info" variant="tonal" density="compact">
+                <v-alert
+                  type="info"
+                  variant="tonal"
+                  density="compact"
+                  class="cx-stream-readout"
+                >
                   <div class="d-flex align-center">
+                    <span class="cx-stream-tag">URI</span>
                     <code
-                      class="text-caption flex-grow-1"
-                      style="word-break: break-all"
+                      class="text-caption flex-grow-1 cx-stream-uri"
+                      style="white-space: nowrap; overflow-x: auto"
                       >{{ store.currentStreamUri }}</code
                     >
                     <v-btn
@@ -331,9 +373,13 @@
                 </v-alert>
               </div>
             </div>
-            <div v-else class="text-center text-medium-emphasis">
-              <v-icon size="120" color="grey">mdi-camera-off</v-icon>
-              <div class="mt-4">請選擇一個攝影機並點選「預覽」</div>
+            <div v-else class="text-center text-medium-emphasis cx-empty-state">
+              <div class="cx-empty-ring">
+                <v-icon size="52">mdi-camera-off</v-icon>
+              </div>
+              <div class="cx-empty-title">NO SIGNAL</div>
+              <div class="cx-empty-hint">請選擇一個攝影機並點選「預覽」</div>
+              <div class="cx-empty-meta">STANDBY · AWAITING NODE</div>
             </div>
           </v-card-text>
         </v-card>
@@ -374,7 +420,7 @@
 
     <!-- FFmpeg not installed dialog -->
     <v-dialog v-model="ffmpegDialogOpen" max-width="500">
-      <v-card>
+      <v-card class="glass-panel cx-dialog">
         <v-card-title class="d-flex align-center">
           <v-icon class="mr-2" color="warning">mdi-alert-circle</v-icon>
           未偵測到 FFmpeg
@@ -409,7 +455,7 @@
 
     <!-- Diagnose result dialog -->
     <v-dialog v-model="diagnoseDialog" max-width="700">
-      <v-card>
+      <v-card class="glass-panel cx-dialog">
         <v-card-title>
           <v-icon class="mr-2">mdi-stethoscope</v-icon>
           ONVIF 診斷報告
@@ -441,7 +487,7 @@
 
     <!-- Add/Edit camera dialog -->
     <v-dialog v-model="addDialog" max-width="500">
-      <v-card>
+      <v-card class="glass-panel cx-dialog">
         <v-card-title>
           <v-icon class="mr-2">{{
             editingCameraId ? "mdi-pencil" : "mdi-camera-plus"
@@ -962,6 +1008,18 @@ async function copyDiagnoseReport() {
   min-height: 0;
 }
 
+.preview-content {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.preview-content .preview-frame {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 260px;
+}
+
 .preview-frame {
   background: #000;
   height: 100%;
@@ -1001,6 +1059,412 @@ async function copyDiagnoseReport() {
   max-width: 180px;
 }
 
+/* --- Cyberpunk HUD layer --- */
+
+.cx-panel-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px 0;
+}
+
+.cx-strip-meta {
+  font-family: var(--cx-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--cx-muted);
+}
+
+.cx-result-label {
+  font-family: var(--cx-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--cx-muted);
+}
+
+.cx-result-label b {
+  margin-left: 2px;
+  font-weight: 600;
+  color: var(--cx-cyan);
+  text-shadow: 0 0 12px rgba(34, 211, 238, 0.5);
+}
+
+.preview-header {
+  padding-top: 14px;
+  padding-bottom: 12px;
+  padding-right: 24px;
+  align-content: center;
+}
+
+.preview-header :deep(.v-checkbox),
+.preview-header :deep(.v-switch) {
+  flex: 0 0 auto;
+  min-width: max-content;
+}
+
+.preview-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.preview-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.preview-toolbar :deep(.v-input) {
+  flex: 0 0 auto;
+}
+
+.preview-heading-icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid var(--cx-line);
+  background: rgba(34, 211, 238, 0.07);
+  color: var(--cx-cyan);
+  clip-path: polygon(
+    0 0,
+    100% 0,
+    100% calc(100% - 8px),
+    calc(100% - 8px) 100%,
+    0 100%
+  );
+}
+
+.preview-heading-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  line-height: 1.1;
+}
+
+.preview-heading-title {
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--cx-text);
+}
+
+.cx-camera-chip.v-chip {
+  background: rgba(34, 211, 238, 0.12) !important;
+  color: var(--cx-cyan) !important;
+  border: 1px solid var(--cx-line-strong);
+}
+
+.cx-camera-chip .v-chip__underlay {
+  display: none;
+}
+
+.cx-live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 2px;
+  padding: 3px 8px;
+  border: 1px solid rgba(251, 113, 133, 0.45);
+  background: rgba(251, 113, 133, 0.08);
+  color: #fb7185;
+  font-family: var(--cx-font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+}
+
+.cx-live-badge.is-pending {
+  border-color: rgba(251, 191, 36, 0.45);
+  background: rgba(251, 191, 36, 0.08);
+  color: #fbbf24;
+}
+
+.cx-live-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  background: currentColor;
+  box-shadow: 0 0 9px currentColor;
+  animation: cx-pulse 1.6s ease-in-out infinite;
+}
+
+.cx-preview-frame {
+  border: 1px solid rgba(34, 211, 238, 0.26);
+  background:
+    radial-gradient(
+      ellipse at 50% 42%,
+      rgba(34, 211, 238, 0.08),
+      transparent 68%
+    ),
+    #02040a;
+  box-shadow:
+    inset 0 0 80px rgba(0, 0, 0, 0.85),
+    0 0 34px rgba(34, 211, 238, 0.08);
+}
+
+.cx-preview-grid {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(34, 211, 238, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 211, 238, 0.07) 1px, transparent 1px);
+  background-size: 44px 44px;
+  opacity: 0.55;
+  -webkit-mask-image: radial-gradient(
+    ellipse 72% 72% at 50% 50%,
+    transparent 42%,
+    #000 100%
+  );
+  mask-image: radial-gradient(
+    ellipse 72% 72% at 50% 50%,
+    transparent 42%,
+    #000 100%
+  );
+}
+
+.cx-preview-scan {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(180, 240, 255, 0.035) 0px,
+    rgba(180, 240, 255, 0.035) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+  opacity: 0.55;
+  overflow: hidden;
+}
+
+.cx-preview-scan::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 20%;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(34, 211, 238, 0.07),
+    transparent
+  );
+  animation: cx-preview-sweep 7s linear infinite;
+}
+
+.cx-corner {
+  position: absolute;
+  z-index: 4;
+  width: 24px;
+  height: 24px;
+  pointer-events: none;
+  border: 0 solid var(--cx-cyan);
+  opacity: 0.85;
+  filter: drop-shadow(0 0 6px rgba(34, 211, 238, 0.6));
+}
+
+.cx-tl {
+  top: 8px;
+  left: 8px;
+  border-top-width: 1px;
+  border-left-width: 1px;
+}
+
+.cx-tr {
+  top: 8px;
+  right: 8px;
+  border-top-width: 1px;
+  border-right-width: 1px;
+}
+
+.cx-bl {
+  bottom: 8px;
+  left: 8px;
+  border-bottom-width: 1px;
+  border-left-width: 1px;
+}
+
+.cx-br {
+  bottom: 8px;
+  right: 8px;
+  border-bottom-width: 1px;
+  border-right-width: 1px;
+}
+
+.cx-loading-overlay {
+  z-index: 6;
+  background: rgba(2, 6, 12, 0.72);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+
+.cx-loading-title,
+.cx-boot-title {
+  margin-top: 14px;
+  font-family: var(--cx-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  color: var(--cx-cyan);
+  text-shadow: 0 0 14px rgba(34, 211, 238, 0.5);
+}
+
+.cx-boot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.cx-boot-ring {
+  display: grid;
+  place-items: center;
+  width: 96px;
+  height: 96px;
+  border: 1px solid var(--cx-line);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(34, 211, 238, 0.08),
+    transparent 70%
+  );
+  box-shadow:
+    0 0 40px rgba(34, 211, 238, 0.1),
+    inset 0 0 30px rgba(34, 211, 238, 0.05);
+}
+
+.cx-stream-readout {
+  border-left: 2px solid var(--cx-cyan) !important;
+  background: rgba(34, 211, 238, 0.045) !important;
+}
+
+.cx-stream-tag {
+  flex: 0 0 auto;
+  margin-right: 10px;
+  padding: 1px 5px;
+  border: 1px solid var(--cx-line-strong);
+  font-family: var(--cx-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--cx-cyan);
+}
+
+.cx-stream-uri {
+  min-width: 0;
+  font-family: var(--cx-font-mono);
+  color: var(--cx-muted);
+}
+
+.cx-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.cx-empty-ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 104px;
+  height: 104px;
+  margin-bottom: 18px;
+  border: 1px solid var(--cx-line-strong);
+  border-radius: 50%;
+  color: var(--cx-cyan) !important;
+  background: radial-gradient(
+    circle,
+    rgba(34, 211, 238, 0.1),
+    transparent 70%
+  );
+  box-shadow:
+    0 0 44px rgba(34, 211, 238, 0.12),
+    inset 0 0 32px rgba(34, 211, 238, 0.06);
+}
+
+.cx-empty-ring::before {
+  content: "";
+  position: absolute;
+  inset: -11px;
+  border: 1px dashed rgba(34, 211, 238, 0.24);
+  border-radius: 50%;
+  animation: cx-orbit 32s linear infinite;
+}
+
+.cx-empty-title {
+  font-family: var(--cx-font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.3em;
+  color: var(--cx-text);
+}
+
+.cx-empty-hint {
+  margin-top: 8px;
+  font-size: 0.875rem;
+  color: var(--cx-muted);
+}
+
+.cx-empty-meta {
+  margin-top: 10px;
+  font-family: var(--cx-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  color: var(--cx-muted);
+  opacity: 0.7;
+}
+
+.cx-dialog {
+  max-height: calc(100vh - 48px);
+}
+
+.cx-dialog :deep(.v-card-title) {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--cx-line);
+}
+
+.cx-dialog :deep(.v-card-actions) {
+  padding-top: 10px !important;
+  padding-bottom: 14px !important;
+  border-top: 1px solid var(--cx-line);
+}
+
+@keyframes cx-preview-sweep {
+  0% {
+    transform: translateY(-25%);
+  }
+  100% {
+    transform: translateY(525%);
+  }
+}
+
+@keyframes cx-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.v-theme--light .cx-live-badge {
+  color: #be123c;
+  border-color: rgba(190, 18, 60, 0.45);
+}
+
+.v-theme--light .cx-live-badge.is-pending {
+  color: #b45309;
+  border-color: rgba(180, 83, 9, 0.45);
+}
+
 @media (max-width: 1279px) {
   .home-container {
     height: auto;
@@ -1012,8 +1476,13 @@ async function copyDiagnoseReport() {
   }
 
   .left-panel {
-    height: calc(100vh - 96px);
-    min-height: 520px;
+    height: auto;
+    min-height: 0;
+  }
+
+  .left-panel-card {
+    max-height: 58vh;
+    min-height: 360px;
   }
 
   .right-panel {
