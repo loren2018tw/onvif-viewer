@@ -1,9 +1,55 @@
 use crate::models::{CameraInfo, DiscoveredCamera, FFmpegStatus, PreviewSession, ScanRange};
 use crate::stream::StreamManager;
 use chrono::Utc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
+
+/// Tracks the newest preview request so queued requests for cameras that the
+/// user has already switched away from do not start another ffmpeg pipeline.
+#[derive(Default)]
+pub struct PreviewCancellation {
+    generation: AtomicU64,
+}
+
+impl PreviewCancellation {
+    fn next_generation(&self) -> u64 {
+        self.generation.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    fn cancel(&self) -> u64 {
+        self.generation.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    fn is_current(&self, generation: u64) -> bool {
+        self.generation.load(Ordering::SeqCst) == generation
+    }
+}
+
+fn is_rtsp_uri(uri: &str) -> bool {
+    uri.starts_with("rtsp://") || uri.starts_with("rtsps://")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PreviewCancellation;
+
+    #[test]
+    fn newest_generation_wins() {
+        let cancellation = PreviewCancellation::default();
+        let first = cancellation.next_generation();
+        assert!(cancellation.is_current(first));
+
+        let second = cancellation.next_generation();
+        assert!(!cancellation.is_current(first));
+        assert!(cancellation.is_current(second));
+
+        let stop_generation = cancellation.cancel();
+        assert_eq!(stop_generation, 3);
+        assert!(!cancellation.is_current(second));
+    }
+}
 
 #[tauri::command]
 pub async fn discover_onvif_cameras(
@@ -100,7 +146,9 @@ pub fn save_camera(
 
 #[tauri::command]
 pub fn delete_camera(id: String) -> Result<Vec<CameraInfo>, String> {
-    crate::storage::remove_camera(&id).map_err(|e| e.to_string())
+    let cameras = crate::storage::remove_camera(&id).map_err(|e| e.to_string())?;
+    crate::stream::delete_camera_snapshot(&id);
+    Ok(cameras)
 }
 
 #[tauri::command]
@@ -110,6 +158,9 @@ pub fn update_camera_info(camera: CameraInfo) -> Result<Vec<CameraInfo>, String>
     // Preserve created_at and optional fields from the existing record
     if let Some(existing) = cameras.iter().find(|c| c.id == updated.id) {
         updated.created_at = existing.created_at;
+        if existing.address != updated.address || existing.onvif_port != updated.onvif_port {
+            crate::stream::delete_camera_snapshot(&updated.id);
+        }
         if updated.stream_uri.is_none() {
             updated.stream_uri = existing.stream_uri.clone();
         }
@@ -131,35 +182,82 @@ pub async fn start_preview(
     username: String,
     password: String,
     stream_type: Option<String>,
+    stream_uri: Option<String>,
+    has_audio: Option<bool>,
+    camera_id: Option<String>,
     state: tauri::State<'_, Arc<Mutex<StreamManager>>>,
+    cancellation: tauri::State<'_, PreviewCancellation>,
 ) -> Result<PreviewSession, String> {
-    // First get the RTSP stream URI. Some cameras never answer the ONVIF
-    // request, so bound it instead of leaving the UI spinning forever.
-    let rtsp_uri = tokio::time::timeout(
-        std::time::Duration::from_secs(20),
-        crate::camera::get_stream_uri(
-            &address,
-            port,
-            &username,
-            &password,
-            stream_type.as_deref().unwrap_or("sub"),
-        ),
-    )
-    .await
-    .map_err(|_| "取得 RTSP 串流位址逾時（20 秒），請確認攝影機的 RTSP 連線是否正常".to_string())?
-    .map_err(|e| e.to_string())?;
+    let generation = cancellation.next_generation();
+
+    // The frontend caches the RTSP URI per camera/stream after the first
+    // successful preview. Re-using it skips the ONVIF round-trip on re-open.
+    let cached_uri = stream_uri.filter(|uri| is_rtsp_uri(uri));
+    let rtsp_uri = match cached_uri {
+        Some(uri) => uri,
+        None => {
+            // Some cameras never answer the ONVIF request, so bound it instead
+            // of leaving the UI spinning forever.
+            tokio::time::timeout(
+                std::time::Duration::from_secs(20),
+                crate::camera::get_stream_uri(
+                    &address,
+                    port,
+                    &username,
+                    &password,
+                    stream_type.as_deref().unwrap_or("sub"),
+                ),
+            )
+            .await
+            .map_err(|_| {
+                "取得 RTSP 串流位址逾時（20 秒），請確認攝影機的 RTSP 連線是否正常".to_string()
+            })?
+            .map_err(|e| e.to_string())?
+        }
+    };
+
+    if !cancellation.is_current(generation) {
+        return Err("預覽請求已被較新的操作取代".to_string());
+    }
 
     let mut manager = state.lock().await;
-    manager.start(&rtsp_uri).await.map_err(|e| e.to_string())
+    if !cancellation.is_current(generation) {
+        return Err("預覽請求已被較新的操作取代".to_string());
+    }
+
+    manager
+        .start(&rtsp_uri, has_audio, camera_id, generation)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn stop_preview(
     state: tauri::State<'_, Arc<Mutex<StreamManager>>>,
+    cancellation: tauri::State<'_, PreviewCancellation>,
 ) -> Result<(), String> {
+    let generation = cancellation.cancel();
     let mut manager = state.lock().await;
-    manager.stop().await;
+    manager.stop_if_older_than(generation).await;
     Ok(())
+}
+
+#[tauri::command]
+pub fn get_camera_snapshot(camera_id: String) -> Result<Option<String>, String> {
+    use base64::Engine;
+
+    let Some(path) = crate::stream::camera_snapshot_path(&camera_id) else {
+        return Ok(None);
+    };
+
+    match std::fs::read(&path) {
+        Ok(bytes) => {
+            let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+            Ok(Some(format!("data:image/jpeg;base64,{encoded}")))
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(format!("讀取上次畫面失敗：{err}")),
+    }
 }
 
 #[tauri::command]

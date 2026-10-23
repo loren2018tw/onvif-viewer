@@ -26,6 +26,40 @@ export const useCameraStore = defineStore("camera", () => {
   const ffmpegStatus = ref<FFmpegStatus | null>(null);
   let previewRequestId = 0;
 
+  interface CachedPreview {
+    streamUri: string;
+    hasAudio: boolean;
+    cachedAt: number;
+  }
+
+  const previewCache = new Map<string, CachedPreview>();
+  const PREVIEW_CACHE_TTL_MS = 10 * 60 * 1000;
+
+  function previewCacheKey(cameraId: string, streamType: StreamType) {
+    return `${cameraId}:${streamType}`;
+  }
+
+  function getCachedPreview(key: string): CachedPreview | null {
+    const cached = previewCache.get(key);
+    if (!cached) {
+      return null;
+    }
+    if (Date.now() - cached.cachedAt > PREVIEW_CACHE_TTL_MS) {
+      previewCache.delete(key);
+      return null;
+    }
+    return cached;
+  }
+
+  function invalidateCameraPreviewCache(cameraId: string) {
+    const prefix = `${cameraId}:`;
+    for (const key of [...previewCache.keys()]) {
+      if (key.startsWith(prefix)) {
+        previewCache.delete(key);
+      }
+    }
+  }
+
   function clearPreviewState() {
     currentStreamUri.value = null;
     previewUrl.value = null;
@@ -108,6 +142,7 @@ export const useCameraStore = defineStore("camera", () => {
     try {
       error.value = null;
       cameras.value = await invoke<CameraInfo[]>("delete_camera", { id });
+      invalidateCameraPreviewCache(id);
       if (currentStreamUri.value) {
         currentStreamUri.value = null;
       }
@@ -166,6 +201,7 @@ export const useCameraStore = defineStore("camera", () => {
           updated_at: new Date().toISOString(),
         },
       });
+      invalidateCameraPreviewCache(id);
     } catch (e) {
       error.value = String(e);
     }
@@ -209,8 +245,12 @@ export const useCameraStore = defineStore("camera", () => {
     username: string,
     password: string,
     streamType: StreamType = "sub",
+    cameraId?: string,
   ) {
     const requestId = ++previewRequestId;
+    const cacheKey = cameraId ? previewCacheKey(cameraId, streamType) : null;
+    const cached = cacheKey ? getCachedPreview(cacheKey) : null;
+
     currentStreamUri.value = null;
     previewUrl.value = null;
     previewSessionId.value = null;
@@ -219,15 +259,35 @@ export const useCameraStore = defineStore("camera", () => {
     isPreviewing.value = false;
     isLoadingStream.value = true;
 
-    try {
-      error.value = null;
-      const preview = await invoke<PreviewSession>("start_preview", {
+    const invokeStart = (useCache: boolean) =>
+      invoke<PreviewSession>("start_preview", {
         address,
         port,
         username,
         password,
         streamType,
+        streamUri: useCache ? (cached?.streamUri ?? null) : null,
+        hasAudio: useCache ? (cached?.hasAudio ?? null) : null,
+        cameraId: cameraId ?? null,
       });
+
+    try {
+      error.value = null;
+      let preview: PreviewSession;
+      try {
+        preview = await invokeStart(true);
+      } catch (firstError) {
+        if (requestId !== previewRequestId) {
+          return;
+        }
+        // A cached URI can become stale (camera rebooted / profile changed).
+        // Drop it and resolve a fresh URI once before surfacing the error.
+        if (!cached || !cacheKey) {
+          throw firstError;
+        }
+        previewCache.delete(cacheKey);
+        preview = await invokeStart(false);
+      }
       if (requestId !== previewRequestId) {
         return;
       }
@@ -236,6 +296,14 @@ export const useCameraStore = defineStore("camera", () => {
       previewSessionId.value = preview.session_id;
       currentStreamUri.value = preview.stream_uri;
       previewHasAudio.value = preview.has_audio;
+
+      if (cacheKey) {
+        previewCache.set(cacheKey, {
+          streamUri: preview.stream_uri,
+          hasAudio: preview.has_audio,
+          cachedAt: Date.now(),
+        });
+      }
     } catch (e) {
       if (requestId !== previewRequestId) {
         return;

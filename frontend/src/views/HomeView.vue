@@ -302,13 +302,27 @@
           <v-card-text class="preview-body d-flex justify-center align-center">
             <div
               v-if="store.isLoadingStream && !store.previewUrl"
-              class="text-center cx-boot"
+              class="cx-boot-frame"
             >
-              <div class="cx-boot-ring">
-                <v-progress-circular indeterminate color="primary" size="64" />
+              <img
+                v-if="previewPoster"
+                :src="previewPoster"
+                alt=""
+                class="cx-boot-poster"
+              />
+              <div class="text-center cx-boot cx-boot-overlay">
+                <div class="cx-boot-ring">
+                  <v-progress-circular indeterminate color="primary" size="64" />
+                </div>
+                <div class="cx-boot-title">ESTABLISHING UPLINK</div>
+                <div class="mt-2 text-medium-emphasis">
+                  {{
+                    previewPoster
+                      ? "顯示上次畫面，正在重新連線..."
+                      : "正在連線攝影機..."
+                  }}
+                </div>
               </div>
-              <div class="cx-boot-title">ESTABLISHING UPLINK</div>
-              <div class="mt-2 text-medium-emphasis">正在連線攝影機...</div>
             </div>
             <div
               v-else-if="store.previewUrl"
@@ -322,11 +336,18 @@
                 <span class="cx-corner cx-bl" aria-hidden="true"></span>
                 <span class="cx-corner cx-br" aria-hidden="true"></span>
                 <span class="cx-preview-grid" aria-hidden="true"></span>
+                <img
+                  v-if="previewPoster && !isPreviewVisible"
+                  :src="previewPoster"
+                  alt=""
+                  class="preview-poster"
+                />
                 <video
                   ref="previewVideo"
                   autoplay
                   playsinline
                   controls
+                  crossorigin="anonymous"
                   class="preview-video"
                   :class="{ 'preview-video-hidden': !isPreviewVisible }"
                   @canplay="onPreviewReady"
@@ -344,7 +365,13 @@
                     size="56"
                   />
                   <div class="cx-loading-title">ESTABLISHING UPLINK</div>
-                  <div class="mt-1 text-medium-emphasis">正在連線攝影機...</div>
+                  <div class="mt-1 text-medium-emphasis">
+                    {{
+                      previewPoster
+                        ? "顯示上次畫面，正在重新連線..."
+                        : "正在連線攝影機..."
+                    }}
+                  </div>
                 </div>
               </div>
               <div v-if="store.currentStreamUri" class="mt-3">
@@ -371,6 +398,31 @@
                     </v-btn>
                   </div>
                 </v-alert>
+              </div>
+            </div>
+            <div
+              v-else-if="selectedCamera && previewPoster"
+              class="w-100 h-100 preview-content"
+            >
+              <div
+                class="d-flex justify-center align-center preview-frame preview-stage cx-preview-frame"
+              >
+                <span class="cx-corner cx-tl" aria-hidden="true"></span>
+                <span class="cx-corner cx-tr" aria-hidden="true"></span>
+                <span class="cx-corner cx-bl" aria-hidden="true"></span>
+                <span class="cx-corner cx-br" aria-hidden="true"></span>
+                <span class="cx-preview-grid" aria-hidden="true"></span>
+                <img
+                  :src="previewPoster"
+                  alt=""
+                  class="preview-poster preview-poster-static"
+                />
+                <div class="cx-static-overlay">
+                  <div class="cx-static-badge">LAST FRAME</div>
+                  <div class="cx-static-hint">
+                    上次預覽畫面 · 點選「預覽」開始直播
+                  </div>
+                </div>
               </div>
             </div>
             <div v-else class="text-center text-medium-emphasis cx-empty-state">
@@ -568,6 +620,7 @@
 
 <script setup lang="ts">
 import Hls from "hls.js";
+import { invoke } from "@tauri-apps/api/core";
 import {
   computed,
   nextTick,
@@ -622,6 +675,8 @@ const formData = ref({
 
 const ffmpegDialogOpen = ref(false);
 const previewVideo = ref<HTMLVideoElement | null>(null);
+const previewPoster = ref<string | null>(null);
+const posterCache = new Map<string, string>();
 const isPreviewVisible = ref(false);
 const streamTypeOptions: { title: string; value: StreamType }[] = [
   { title: "副碼流", value: "sub" },
@@ -733,6 +788,36 @@ function failPreviewPlayback(sessionId: string | undefined, message: string) {
   }
 }
 
+async function loadCachedSnapshot(cameraId: string, force = false) {
+  if (!force && posterCache.has(cameraId)) {
+    if (selectedCamera.value?.id === cameraId) {
+      previewPoster.value = posterCache.get(cameraId) ?? null;
+    }
+    return;
+  }
+
+  try {
+    const dataUrl = await invoke<string | null>("get_camera_snapshot", {
+      cameraId,
+    });
+    if (dataUrl) {
+      posterCache.set(cameraId, dataUrl);
+    } else {
+      posterCache.delete(cameraId);
+    }
+    if (selectedCamera.value?.id === cameraId) {
+      previewPoster.value = dataUrl;
+    }
+  } catch {
+    // 讀取快取失敗時保留目前畫面即可，不影響預覽流程。
+  }
+}
+
+function showCachedFrame(cameraId: string) {
+  previewPoster.value = posterCache.get(cameraId) ?? null;
+  void loadCachedSnapshot(cameraId, true);
+}
+
 watch(
   () => store.error,
   (val) => {
@@ -759,6 +844,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   destroyPreviewPlayer();
+  void store.stopPreview();
 });
 
 watch(
@@ -844,39 +930,53 @@ function applyAudioPreference() {
 }
 
 async function selectCamera(cam: CameraInfo) {
+  const previousId = selectedCamera.value?.id;
   selectedCamera.value = cam;
+  showCachedFrame(cam.id);
   if (autoPreview.value) {
     // 先停止舊的預覽再啟動新的，避免殘留狀態
     destroyPreviewPlayer();
     await store.stopPreview();
+    if (previousId && previousId !== cam.id) {
+      void loadCachedSnapshot(previousId, true);
+    }
     await store.startPreview(
       cam.address,
       cam.onvif_port,
       cam.username,
       cam.password,
       selectedStreamType.value,
+      cam.id,
     );
   } else {
     destroyPreviewPlayer();
-    store.stopPreview();
+    await store.stopPreview();
+    if (previousId && previousId !== cam.id) {
+      void loadCachedSnapshot(previousId, true);
+    }
   }
 }
 
 async function handlePreview() {
   if (!selectedCamera.value) return;
   const cam = selectedCamera.value;
+  showCachedFrame(cam.id);
   await store.startPreview(
     cam.address,
     cam.onvif_port,
     cam.username,
     cam.password,
     selectedStreamType.value,
+    cam.id,
   );
 }
 
 async function handleStopPreview() {
   destroyPreviewPlayer();
   await store.stopPreview();
+  if (selectedCamera.value) {
+    await loadCachedSnapshot(selectedCamera.value.id, true);
+  }
 }
 
 function onPreviewReady() {
@@ -963,14 +1063,24 @@ async function handleSaveCamera() {
     password: formData.value.password,
   };
   if (editingCameraId.value) {
+    const editedId = editingCameraId.value;
+    posterCache.delete(editedId);
     await store.updateCamera(
-      editingCameraId.value,
+      editedId,
       formData.value.name,
       formData.value.address,
       formData.value.port,
       formData.value.username,
       formData.value.password,
     );
+    const updated = store.cameras.find((camera) => camera.id === editedId);
+    if (updated) {
+      selectedCamera.value = updated;
+    }
+    if (selectedCamera.value?.id === editedId) {
+      previewPoster.value = null;
+      void loadCachedSnapshot(editedId, true);
+    }
   } else {
     await store.saveCamera(
       formData.value.name,
@@ -986,7 +1096,9 @@ async function handleSaveCamera() {
 async function handleDelete(id: string) {
   if (selectedCamera.value?.id === id) {
     selectedCamera.value = null;
+    previewPoster.value = null;
   }
+  posterCache.delete(id);
   await store.deleteCamera(id);
 }
 
@@ -1108,6 +1220,54 @@ async function copyDiagnoseReport() {
   width: 100%;
   height: 100%;
   background: #000;
+  position: relative;
+  z-index: 1;
+}
+
+.preview-poster {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+  opacity: 0.5;
+  filter: blur(1px) saturate(0.85);
+  pointer-events: none;
+}
+
+.preview-poster-static {
+  opacity: 0.9;
+  filter: none;
+}
+
+.cx-static-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding-bottom: 24px;
+  background: linear-gradient(180deg, transparent 52%, rgba(2, 6, 12, 0.85));
+  pointer-events: none;
+}
+
+.cx-static-badge {
+  font-family: var(--cx-font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  color: var(--cx-cyan);
+  text-shadow: 0 0 12px rgba(34, 211, 238, 0.5);
+}
+
+.cx-static-hint {
+  margin-top: 8px;
+  font-size: 0.8rem;
+  color: var(--cx-muted);
 }
 
 .preview-video-hidden {
@@ -1377,9 +1537,9 @@ async function copyDiagnoseReport() {
 
 .cx-loading-overlay {
   z-index: 6;
-  background: rgba(2, 6, 12, 0.72);
-  -webkit-backdrop-filter: blur(3px);
-  backdrop-filter: blur(3px);
+  background: rgba(2, 6, 12, 0.55);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
 }
 
 .cx-loading-title,
@@ -1396,6 +1556,33 @@ async function copyDiagnoseReport() {
   display: flex;
   flex-direction: column;
   align-items: center;
+}
+
+.cx-boot-frame {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 260px;
+  overflow: hidden;
+}
+
+.cx-boot-poster {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+  opacity: 0.5;
+  filter: blur(1px) saturate(0.85);
+}
+
+.cx-boot-overlay {
+  position: relative;
+  z-index: 1;
 }
 
 .cx-boot-ring {
